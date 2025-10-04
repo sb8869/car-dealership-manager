@@ -1,0 +1,52 @@
+[
+  {
+    "make": "Toyota",
+    "model": "Camry",
+    "common_market": 8000
+  },
+  {
+    "make": "Honda",
+    "model": "Civic",
+    "common_market": 7000
+  },
+  {
+    "make": "Ford",
+    "model": "F-150",
+    "common_market": 15000
+  },
+  {
+    "make": "BMW",
+    "model": "3 Series",
+    "common_market": 9000
+  },
+  {
+    "make": "Chevrolet",
+    "model": "Impala",
+    "common_market": 5000
+  },
+  {
+    "make": "Nissan",
+    "model": "Altima",
+    "common_market": 6000
+  },
+  {
+    "make": "Hyundai",
+    "model": "Elantra",
+    "common_market": 4000
+  },
+  {
+    "make": "Subaru",
+    "model": "Outback",
+    "common_market": 11000
+  },
+  {
+    "make": "Jeep",
+    "model": "Cherokee",
+    "common_market": 9500
+  },
+  {
+    "make": "Toyota",
+    "model": "RAV4",
+    "common_market": 12000
+  }
+]

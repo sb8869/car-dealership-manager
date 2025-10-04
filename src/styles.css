@@ -1,0 +1,37 @@
+
+:root{
+  --bg:#f3f4f6;
+  --card:#ffffff;
+  --accent:#034f84;
+  --accent-2:#c0392b;
+  --muted:#6b7280;
+  --good:#16a34a;
+  --bad:#dc2626;
+}
+*{box-sizing:border-box}
+body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:var(--bg); margin:0; padding:20px;}
+.app{max-width:1100px;margin:0 auto;}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.card{background:var(--card);padding:14px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);border:1px solid #e6e6e6;}
+.grid{display:grid;gap:12px;}
+.cols-3{grid-template-columns:2fr 2fr 2fr;}
+.list{display:flex;flex-direction:column;gap:10px;}
+.car-card{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:6px;border:1px solid #eee;background:#fff;}
+.small{font-size:13px;color:var(--muted);}
+.btn{background:var(--accent);color:white;border:none;padding:8px 10px;border-radius:6px;cursor:pointer;}
+.btn.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+.cash{font-weight:700;color:var(--accent);}
+.modal{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;padding:20px;}
+.modal .card{width:820px;max-width:100%;}
+/* Constrain modal height so it never stretches beyond viewport; allow internal scrolling */
+.modal .card{max-height: calc(100vh - 80px); overflow: auto;}
+/* scrollable area for long buyer lists inside the listing modal */
+.buyer-list{max-height: calc(100vh - 360px); overflow-y: auto; padding-right:8px;}
+.row{display:flex;gap:10px;align-items:center;}
+.input{padding:8px;border-radius:6px;border:1px solid #ddd;width:140px;}
+.pulse{animation:pulse 1.2s infinite;}
+@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+.tag{background:#eef2ff;color:var(--accent);padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #e0e7ff;}
+.notice{font-size:13px;color:var(--muted)}
+.bad{color:var(--bad)}
+.good{color:var(--good)}

@@ -1,0 +1,41 @@
+# Node
+node_modules/
+.npm/
+# Build outputs
+dist/
+build/
+.vite/
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+coverage/
+
+# Generated docs
+Project_Handoff.rtf
+
+# Optional: ignore the generated docx if you don't want it tracked
+# Project_Handoff.docx
+
+# Lockfiles (keep package-lock.json by default; uncomment to ignore)
+# package-lock.json
