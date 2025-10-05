@@ -147,10 +147,18 @@ export default function App(){
 
   function finalizePurchase(car, price){ setCash(c=>c-price); setInventory(prev=>[ {...car, purchasePrice:price, status:"owned"}, ...prev ]); setMarket(prev=>prev.filter(c=>c.id!==car.id)); setModal(null); }
 
+  // show toast when player purchases from market
+  function finalizePurchaseWithToast(car, price){ finalizePurchase(car, price); addToast({ text: `Purchased ${car.year} ${car.make} ${car.model} for $${price}`, type: 'success' }); }
+
+  function removeMarketCar(carId){
+    setMarket(prev => prev.filter(c => c.id !== carId));
+    addToast({ text: `Seller removed ${carId} from the market.`, type: 'warning' });
+  }
+
   function createListing(carId, listPrice){
     const car = inventory.find(c=>c.id===carId);
     if(!car) return;
-    const listing = {...car, listPrice, id: "listing_"+Math.random().toString(36).slice(2,9), createdAt: Date.now(), waves: 0, buyers: []};
+    const listing = {...car, listPrice: Number(listPrice), id: "listing_"+Math.random().toString(36).slice(2,9), createdAt: Date.now(), waves: 0, buyers: []};
     setListings(prev=>[listing, ...prev]);
     setInventory(prev=>prev.filter(c=>c.id!==carId));
     scheduleBuyerWaves(listing);
@@ -176,6 +184,7 @@ export default function App(){
           const io = Math.min(Math.round(listing.listPrice * (1 - (0.15 + Math.random()*0.15))), budget);
           buyers.push({ id: "b_"+Math.random().toString(36).slice(2,8), budget, offer: io, patience: 2 + Math.floor(Math.random()*2), interest: Math.random() });
         }
+        // buyers appended to listing
         const nowt = Date.now();
         const waveSchedule = (listing.waveSchedule||[]).filter(s => s.dueAt > nowt);
         return {...listing, buyers: [...(listing.buyers||[]), ...buyers], waves: (listing.waves||0)+1, waveSchedule };
@@ -221,10 +230,26 @@ export default function App(){
     const nowt = Date.now();
     const entries = schedule.map(s=>({ id: uid('wave'), dueAt: nowt + s.delay, size: s.size }));
     setListings(prev=>prev.map(l=> l.id===listing.id ? {...l, waveSchedule: entries} : l ));
+    // waves scheduled (no debug toasts)
     entries.forEach(entry => { const delay = Math.max(0, entry.dueAt - Date.now()); const t = setTimeout(()=> runScheduledWave(listing.id, entry.id), delay); buyerTimers.current[listing.id].push(t); });
   }
 
   function removeBuyer(listingId, buyerId){ setListings(prev=> prev.map(l=> l.id!==listingId ? l : {...l, buyers: (l.buyers||[]).filter(b=>b.id!==buyerId) })); }
+
+  // provide a wrapper that also shows a toast when a buyer is removed
+  function handleRemoveBuyer(listingId, buyerId){
+    const listing = listings.find(l=>l.id===listingId);
+    removeBuyer(listingId, buyerId);
+    if(listing){ addToast({ text: `Buyer ${buyerId} left the listing for ${listing.year} ${listing.make} ${listing.model}`, type: 'warning' }); }
+  }
+
+  // update a buyer's offer on a listing (called from negotiation modal counters)
+  function updateBuyerOffer(listingId, buyerId, newOffer){
+    setListings(prev=> prev.map(l => {
+      if(l.id !== listingId) return l;
+      return {...l, buyers: (l.buyers||[]).map(b => b.id===buyerId ? {...b, offer: Math.round(Number(newOffer))} : b)};
+    }));
+  }
 
   function openListingModal(listing){ setModal({side:"listing", subject: listing}); }
 
@@ -344,13 +369,28 @@ export default function App(){
         </div>
       )}
 
-      {modal ? (
-        modal.side === "listing" ? (
-            <ListingModal modal={modal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchase(car,price)} onSell={finalizeSale} refreshMarket={refreshMarket} onNegotiate={openSellNegotiation} onRemoveBuyer={removeBuyer} onUpdatePrice={updateListingPrice} getPriceCooldownRemaining={getPriceCooldownRemaining} getRefreshCooldownRemaining={getRefreshCooldownRemaining} now={now} />
+      {(() => {
+        // ensure modals that reference listings receive the live listing object
+        if(!modal) return null;
+        let resolvedModal = modal;
+        if(modal.side === 'listing' || modal.side === 'sell'){
+          const listingId = modal.subject && modal.subject.id;
+          if(listingId){
+            const live = listings.find(l => l.id === listingId);
+            if(!live){
+              // listing no longer exists (sold/removed): close modal
+              return null;
+            }
+            resolvedModal = {...modal, subject: live};
+          }
+        }
+
+        return resolvedModal.side === "listing" ? (
+          <ListingModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} refreshMarket={refreshMarket} onNegotiate={openSellNegotiation} onRemoveBuyer={handleRemoveBuyer} onUpdatePrice={updateListingPrice} onUpdateBuyerOffer={updateBuyerOffer} getPriceCooldownRemaining={getPriceCooldownRemaining} getRefreshCooldownRemaining={getRefreshCooldownRemaining} now={now} />
         ) : (
-          <NegotiationModal modal={modal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchase(car,price)} onSell={finalizeSale} onRemoveBuyer={removeBuyer} />
-        )
-      ) : null}
+          <NegotiationModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} onRemoveBuyer={handleRemoveBuyer} onUpdateBuyerOffer={updateBuyerOffer} onRemoveMarketCar={removeMarketCar} />
+        );
+      })()}
 
       <div style={{position:'fixed',right:20,bottom:20,display:'flex',flexDirection:'column',gap:8,zIndex:9999}}>
         {toasts.map(t=>(

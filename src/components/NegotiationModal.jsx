@@ -5,7 +5,7 @@ function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
 function pct(v){return Math.round(v*100)/100;}
 
-export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell}){
+export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, onRemoveBuyer, onUpdateBuyerOffer, onRemoveMarketCar}){
   const {side, subject, buyer: modalBuyer} = modal || {};
   // support older shape where `modal.car` might be present
   const car = subject || (modal && modal.car);
@@ -15,6 +15,42 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
   const [currentPlayerOffer, setCurrentPlayerOffer] = useState("");
   const [lastBuyerOffer, setLastBuyerOffer] = useState(null);
   const [sellerCounter, setSellerCounter] = useState(null);
+  const [buyCounterValue, setBuyCounterValue] = useState("");
+  const [counterValue, setCounterValue] = useState("");
+  const [buyerWalked, setBuyerWalked] = useState(false);
+  const [sellerWalked, setSellerWalked] = useState(false);
+
+  function handleSellCounterValue(val){
+    const price = Math.round(Number(val));
+    if(!price || price<=0){ alert('Enter a valid counter'); return; }
+    const B = Math.round(car.estimatedResale * (0.9 + Math.random()*0.2));
+    if(price > B){
+      addLog(`Countered $${price} above buyer's max ($${B}). Buyer walks.`);
+      if(typeof onRemoveBuyer === 'function' && modalBuyer){ try{ onRemoveBuyer(car.id, modalBuyer.id); }catch(e){} }
+      setPatience(p=>p-1);
+      setRound(r=>r+1);
+      setCounterValue("");
+      setBuyerWalked(true);
+      return;
+    }
+    const io = lastBuyerOffer || computeInitialBuyerOffer(car);
+    const willAccept = Math.random() < (0.25 + 0.5*(io / price));
+    if(willAccept){
+      addLog(`Buyer ${modalBuyer?.id || ''} accepts your counter $${price}. Deal.`);
+      const buyerId = modalBuyer?.id || null;
+      onSell(car.id, buyerId, price);
+      setCounterValue("");
+      return;
+    }
+    const raise = Math.round(io + Math.random()*(price - io)*0.4);
+    addLog(`Buyer ${modalBuyer?.id || ''} declines and counters $${raise}.`);
+    setLastBuyerOffer(raise);
+    // notify parent to update buyer offer live
+    if(typeof onUpdateBuyerOffer === 'function' && modalBuyer){ try{ onUpdateBuyerOffer(car.id, modalBuyer.id, raise); }catch(e){} }
+    setPatience(p=>p-1);
+    setRound(r=>r+1);
+    setCounterValue("");
+  }
 
   useEffect(()=>{
     // initialize buyer initial offer when selling
@@ -28,6 +64,14 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
     }
     // eslint-disable-next-line
   },[]);
+
+  // prefill counter input when a buyer offer appears (suggest +5%)
+  useEffect(()=>{
+    if(lastBuyerOffer){
+      const suggestion = Math.round(lastBuyerOffer * 1.05);
+      setCounterValue(String(suggestion));
+    }
+  },[lastBuyerOffer]);
 
   function addLog(text){
     setLog(l=>[...l, {round:round, text}]);
@@ -61,10 +105,28 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
     const gapPercent = (R - offer)/Math.max(1, R);
     // insulting
     if(offer <= R*0.6){
-      // insult: chance walkaway
-      if(Math.random() < 0.6){
+      // insult: if the offer is extremely low relative to asking -> instant walk
+      const insultRatio = offer / Math.max(1, A);
+      const tinyAbsolute = Math.max(50, Math.round(A * 0.05));
+      if(offer <= tinyAbsolute || insultRatio < 0.05){
+        addLog(`You offered $${offer}. Seller is outraged and walks away immediately.`);
+        setPatience(0);
+        setSellerWalked(true);
+        // remove market car immediately if parent provided handler
+        if(typeof onRemoveMarketCar === 'function'){
+          try{ onRemoveMarketCar(car.id); }catch(e){}
+        }
+        return;
+      }
+
+      // otherwise a strong chance to walk, otherwise they may scoff and counter
+      if(Math.random() < 0.9){
         addLog(`You offered $${offer}. Seller is insulted and walks away.`);
         setPatience(0);
+        setSellerWalked(true);
+        if(typeof onRemoveMarketCar === 'function'){
+          try{ onRemoveMarketCar(car.id); }catch(e){}
+        }
         return;
       } else {
         const counter = Math.round(A - (Math.random()*0.05*A));
@@ -124,6 +186,50 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
     }
   }
 
+  function handleBuyCounterValue(val){
+    const price = Math.round(Number(val));
+    if(!price || price<=0){ alert('Enter a valid counter'); return; }
+    if(price > cash){ alert('Not enough cash'); return; }
+    const sc = sellerCounter || (car && car.asking) || 0;
+    // if the counter is extremely low relative to seller's counter/ask, treat as insult -> walk
+    const insultRatio = price / Math.max(1, sc);
+    const tinyAbsolute = Math.max(50, Math.round(sc * 0.02));
+    if(price <= tinyAbsolute || insultRatio < 0.03){
+      addLog(`You countered $${price}. Seller is outraged and walks away.`);
+      setSellerWalked(true);
+      setPatience(0);
+      if(typeof onRemoveMarketCar === 'function'){
+        try{ onRemoveMarketCar(car.id); }catch(e){}
+      }
+      setBuyCounterValue("");
+      return;
+    }
+
+    if(price >= sc){
+      addLog(`You countered $${price}. Seller accepts. Deal done.`);
+      onBuy(subject, price);
+      setBuyCounterValue("");
+      return;
+    }
+
+    // acceptance probability should scale with closeness to seller counter/ask and be very small for low offers
+    const acceptProb = Math.max(0.02, Math.min(0.95, 0.05 + 0.9 * (price / Math.max(1, sc))));
+    const willAccept = Math.random() < acceptProb;
+    if(willAccept){
+      addLog(`Seller accepts your counter $${price}. Deal done.`);
+      onBuy(subject, price);
+      setBuyCounterValue("");
+      return;
+    }
+
+    const raise = Math.round(sc + Math.random()*(sc - price)*0.4);
+    setSellerCounter(raise);
+    addLog(`Seller declines and counters $${raise}.`);
+    setPatience(p=>p-1);
+    setRound(r=>r+1);
+    setBuyCounterValue("");
+  }
+
   function handleSellSideOffer(offer){
     // Player is selling; buyer has lastBuyerOffer and buyer budget near market
     const B = Math.round(car.estimatedResale * (0.9 + Math.random()*0.2)); // buyer max around market
@@ -131,6 +237,10 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
     if(offer > B){
       addLog(`You asked $${offer} which is above buyer's max ($${B}). Buyer walks.`);
       setPatience(0);
+      // inform parent to remove this buyer from the listing
+      if(typeof onRemoveBuyer === 'function' && modalBuyer){
+        try{ onRemoveBuyer(car.id, modalBuyer.id); }catch(e){}
+      }
       return;
     }
     // if offer within small margin of buyer offer, buyer may accept
@@ -175,7 +285,16 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
     }
   }
 
+  function acceptSellerAsk(){
+    const ask = car && car.asking;
+    if(!ask) return;
+    if(ask > cash){ alert('Not enough cash'); return; }
+    addLog(`You accept seller's asking price $${ask}. Deal done.`);
+    onBuy(subject, ask);
+  }
+
   function acceptBuyerOffer(){
+    if(buyerWalked){ alert('Buyer has walked away.'); return; }
     if(!lastBuyerOffer) return;
     addLog(`You accept buyer's offer $${lastBuyerOffer}. Deal done.`);
     const buyerId = modalBuyer?.id || null;
@@ -200,17 +319,29 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
   useEffect(()=>{
     if(patience<=0){
       addLog("Negotiation ended: party walked away.");
+      // if selling and there is a buyer in modal, remove the buyer from the listing
+      if(side === "sell" && modalBuyer && typeof onRemoveBuyer === 'function'){
+        try{ onRemoveBuyer(car.id, modalBuyer.id); }catch(e){}
+      }
+      // if buying and seller walked (patience exhausted), mark seller walked and remove car from market
+      if(side === "buy"){
+        setSellerWalked(true);
+        if(typeof onRemoveMarketCar === 'function'){
+          try{ onRemoveMarketCar(car.id); }catch(e){}
+        }
+      }
     }
     // eslint-disable-next-line
   },[patience]);
 
   return (
     <div className="modal">
-      <div className="card">
+    <div className="card" style={{position:'relative'}}>
         <h3 style={{marginTop:0}}>{side==="buy" ? "Buying — Negotiation" : "Selling — Negotiation"}</h3>
         <div style={{display:"flex",gap:12}}>
           <div style={{flex:1}}>
             <div style={{fontWeight:700}}>{car.year} {car.make} {car.model}</div>
+            <button onClick={onCancel} aria-label="Close" style={{position:'absolute',top:12,right:12,background:'transparent',border:'none',fontSize:18,cursor:'pointer'}}>✕</button>
             <div className="small">Mileage: {car.mileage.toLocaleString()} • Cond: {car.condition}/5</div>
             <div className="small">Base/est: ${car.base.toLocaleString()} • Est resale: ${car.estimatedResale.toLocaleString()}</div>
             {car.damages && car.damages.length>0 ? <div className="small">Damages: {car.damages.map(d=>d.type+"($"+d.cost+")").join(", ")}</div> : null}
@@ -218,47 +349,54 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell})
             <div style={{marginTop:8}} className="small">Round: {round}</div>
           </div>
 
-          <div style={{width:320}}>
-            <div style={{display:"flex",gap:8,marginBottom:8}}>
-              <input className="input" placeholder="Enter offer" value={currentPlayerOffer} onChange={e=>setCurrentPlayerOffer(e.target.value)} />
-              <button className="btn" onClick={handlePlayerOffer}>Make Offer</button>
-              <button className="btn secondary" onClick={()=>{ onCancel(); }}>Cancel</button>
-            </div>
-
-            {side==="buy" ? (
-              <>
-                {sellerCounter ? (
-                  <div style={{marginBottom:8}}>
-                    <div className="small">Seller countered with <strong>${sellerCounter}</strong></div>
-                    <div style={{display:"flex",gap:8,marginTop:8}}>
-                      <button className="btn" onClick={acceptSellerCounter}>Accept Counter</button>
-                      <button className="btn secondary" onClick={declineCounter}>Decline</button>
+          <div style={{width:360, minWidth:260}}>
+            <div style={{display:"flex",flexDirection:'column',gap:12}}>
+              {side === "buy" ? (
+                <>
+                  {/* Seller ask / counter card (mirrors sell-side buyer card) */}
+                  <div style={{padding:8,border:'1px solid #eee',borderRadius:6, marginBottom:8}}>
+                    <div style={{fontWeight:700, marginBottom:6}}>{sellerCounter ? 'Seller countered' : 'Seller asks'}</div>
+                    <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${sellerCounter || car.asking}</div>
+                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                      <button className="btn" onClick={sellerCounter ? acceptSellerCounter : acceptSellerAsk} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={sellerWalked || patience<=0 || ((sellerCounter ? sellerCounter : car.asking) > cash)}>Accept</button>
+                      <input className="input" placeholder="Counter amount" value={buyCounterValue} onChange={e=>setBuyCounterValue(e.target.value)} style={{width:120}} />
+                      <button className="btn" onClick={()=>handleBuyCounterValue(buyCounterValue)} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#fd7e14',border:'none'}} disabled={sellerWalked || patience<=0}>Counter</button>
+                      <button className="btn secondary" onClick={declineCounter} style={(sellerWalked || patience<=0) ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={sellerWalked || patience<=0}>Decline</button>
                     </div>
                   </div>
-                ) : null}
-              </>
-            ) : (
-              <>
-                {lastBuyerOffer ? (
-                  <div style={{marginBottom:8}}>
-                    <div className="small">Buyer offered <strong>${lastBuyerOffer}</strong></div>
-                    <div style={{display:"flex",gap:8,marginTop:8}}>
-                      <button className="btn" onClick={acceptBuyerOffer}>Accept Offer</button>
-                      <button className="btn secondary" onClick={declineCounter}>Negotiate / Decline</button>
-                    </div>
-                  </div>
-                ) : null}
-              </>
-            )}
 
-            <div style={{marginTop:8}}>
-              <div style={{fontWeight:700}}>Log</div>
-              <div style={{maxHeight:220,overflowY:"auto",marginTop:6}}>
-                {log.map((l,idx)=>(
-                  <div key={idx} className="small" style={{padding:6,borderBottom:"1px solid #f1f1f1"}}>{l.text}</div>
-                ))}
-              </div>
+                  {/* Quick offer removed — use Accept/Counter/Decline controls only */}
+                </>
+              ) : (
+                <>
+                  {lastBuyerOffer ? (
+                    <div style={{padding:8,border:'1px solid #eee',borderRadius:6}}>
+                      <div style={{fontWeight:700, marginBottom:6}}>Buyer offered</div>
+                      <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${lastBuyerOffer}</div>
+                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                        <button className="btn" onClick={acceptBuyerOffer} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={buyerWalked}>Accept</button>
+                        <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} style={{width:120}} />
+                        <button className="btn" onClick={()=>handleSellCounterValue(counterValue)} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed',border:'none'} : {background:'#fd7e14',border:'none'}} disabled={buyerWalked}>Counter</button>
+                        <button className="btn secondary" onClick={declineCounter} style={buyerWalked ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={buyerWalked}>Decline</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="small">No buyer offer available.</div>
+                  )}
+                  {buyerWalked ? <div style={{marginTop:8,color:'#b21f2d',fontWeight:700}}>Buyer walked away.</div> : null}
+                </>
+              )}
             </div>
+
+          </div>
+        </div>
+
+        <div style={{marginTop:14}}>
+          <div style={{fontWeight:700, marginBottom:8}}>Log</div>
+          <div style={{maxHeight:220,overflowY:"auto",marginTop:6,border:'1px solid #f6f6f6',borderRadius:6,padding:6,background:'#fafafa'}}>
+            {log.map((l,idx)=>(
+              <div key={idx} className="small" style={{padding:6,borderBottom: idx===log.length-1 ? 'none' : '1px solid #f1f1f1'}}>{l.text}</div>
+            ))}
           </div>
         </div>
       </div>

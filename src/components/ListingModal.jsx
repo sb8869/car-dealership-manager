@@ -55,7 +55,7 @@ export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refr
 
   return (
     <div className="modal">
-      <div className="card" style={{position:'relative'}}>
+      <div className="card" style={{position:'relative', width: 'min(1000px, 92vw)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <h3 style={{margin:0}}>Listing — {listing.year} {listing.make} {listing.model}</h3>
           <button onClick={onCancel} aria-label="Close" style={{background:'transparent',border:'none',fontSize:20,cursor:'pointer'}}>✕</button>
@@ -74,24 +74,26 @@ export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refr
               {(!listing.buyers || listing.buyers.length===0) ? (
                 <div className="small">No offers yet.</div>
               ) : (
-                listing.buyers.map(b => (
-                  <div key={b.id} className="car-card" style={{marginTop:8}}>
-                    <div>
-                      <div style={{fontWeight:700}}>Buyer {b.id}</div>
-                      <div className="small">Offer: ${b.offer} • Budget: ${b.budget} • Patience: {b.patience}</div>
+                <div style={{maxHeight:420, overflowY:'auto', paddingRight:6}}>
+                  {listing.buyers.map(b => (
+                    <div key={b.id} className="car-card" style={{marginTop:8}}>
+                      <div>
+                        <div style={{fontWeight:700}}>Buyer {b.id}</div>
+                        <div className="small">Offer: ${b.offer} • Budget: ${b.budget} • Patience: {b.patience}</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        <button className="btn" onClick={()=>negotiateWith(b)}>Negotiate</button>
+                        <button className="btn secondary" onClick={()=>acceptOffer(b)}>Accept</button>
+                      </div>
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      <button className="btn" onClick={()=>negotiateWith(b)}>Negotiate</button>
-                      <button className="btn secondary" onClick={()=>acceptOffer(b)}>Accept</button>
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
 
           </div>
 
-          <div style={{width:320}}>
+          <div style={{width:420, minWidth:320}}>
             <div style={{fontWeight:700}}>Actions</div>
             <div style={{marginTop:8}} className="small">You can accept an existing offer or negotiate with a buyer — buyers appear automatically when the price is reasonable.</div>
             <div style={{marginTop:12}}>
@@ -132,7 +134,7 @@ export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refr
 
             <div style={{marginTop:12}}>
               <div style={{fontWeight:700}}>Log</div>
-              <div style={{maxHeight:260,overflowY:"auto",marginTop:6}}>
+              <div style={{maxHeight:420,overflowY:"auto",marginTop:6}}>
                 {log.map((l,idx)=>(<div key={idx} className="small" style={{padding:6,borderBottom:"1px solid #f1f1f1"}}>{l}</div>))}
               </div>
             </div>
