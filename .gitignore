@@ -1,0 +1,41 @@
+(# Node modules)
+node_modules/
+
+# Vite / build outputs
+dist/
+.vite/
+.build/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# npm/pnpm cache
+.npm/
+.pnpm-store/
+.pnpm-debug.log
+
+# Misc
+.cache/
+coverage/
+
+# Optional: lockfiles (comment out if you commit lockfiles)
+# package-lock.json
+# pnpm-lock.yaml
+
