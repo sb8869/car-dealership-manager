@@ -3,7 +3,6 @@ import React, {useMemo, useState, useEffect} from "react";
 import CooldownRing from "./CooldownRing";
 
 export default function Market({market, onInspect, mode = 'all'}){
-  if(!market || market.length===0) return <div className="small">No cars in market</div>;
   // featured carousel: cheapest, bestCondition, random (deduped)
   const featured = useMemo(()=>{
     if(!market || market.length===0) return [];
@@ -38,6 +37,9 @@ export default function Market({market, onInspect, mode = 'all'}){
     for(let i=0;i<3;i++){ out.push(featured[(featuredIndex + i) % featured.length]); }
     return out;
   },[featured, featuredIndex, mode]);
+
+  // ensure hooks run unconditionally; handle empty market after hooks
+  if(!market || market.length===0) return <div className="small">No cars in market</div>;
 
   return (
     <>
