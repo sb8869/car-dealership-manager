@@ -5,14 +5,10 @@ function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
 function pct(v){return Math.round(v*100)/100;}
 
-export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, onRemoveBuyer}){
-  const {side, buyer} = modal;
-  // use `subject` to represent the item under negotiation: either a market car or a listing
-  let subject = modal && modal.subject ? modal.subject : (modal && (modal.car || modal.listing) ? (modal.car || modal.listing) : null);
-  // defensive fallback: ensure subject is always an object to avoid runtime ReferenceError
-  if(!subject){
-    subject = { year:'?', make:'', model:'', mileage:0, condition:0, base:0, estimatedResale:0, damages:[] };
-  }
+export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell}){
+  const {side, subject, buyer: modalBuyer} = modal || {};
+  // support older shape where `modal.car` might be present
+  const car = subject || (modal && modal.car);
   const [round, setRound] = useState(1);
   const [patience, setPatience] = useState(side==="buy"? randInt(3,5): randInt(2,3));
   const [log, setLog] = useState([]);
@@ -23,18 +19,12 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   useEffect(()=>{
     // initialize buyer initial offer when selling
     if(side==="sell"){
-      const io = (buyer && buyer.offer) ? buyer.offer : computeInitialBuyerOffer(subject);
+      const io = computeInitialBuyerOffer(car);
       setLastBuyerOffer(io);
-      // prefill counter: midpoint between buyer offer and list price (or estimatedResale/base)
-      const listP = subject.listPrice || subject.estimatedResale || subject.base;
-      const suggested = Math.round(io + (listP - io) * 0.5);
-      setCurrentPlayerOffer(String(suggested));
-      addLog(`Buyer offers $${io}` + (buyer ? ` (buyer id ${buyer.id})` : ''));
+      addLog(`Buyer offers $${io}`);
     } else {
       // buying: show initial seller stance
-      addLog(`Seller asks $${subject.asking}`);
-      // suggest a near-ask offer for the player
-      setCurrentPlayerOffer(String(Math.round(subject.asking * 0.95)));
+      addLog(`Seller asks $${car.asking}`);
     }
     // eslint-disable-next-line
   },[]);
@@ -66,8 +56,8 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
 
   function handleBuySideOffer(offer){
     // Apply buyer-side negotiation matrix
-    const A = subject.asking;
-    const R = subject.reserve;
+    const A = car.asking;
+    const R = car.reserve;
     const gapPercent = (R - offer)/Math.max(1, R);
     // insulting
     if(offer <= R*0.6){
@@ -87,7 +77,7 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
     }
 
     // If offer >= ask -> instant accept maybe (but per rules seller may still counter)
-  if(offer >= A){
+    if(offer >= A){
       // seller accepts surprisingly
       addLog(`You offered $${offer}. Seller accepts. Deal done.`);
       onBuy(subject, offer);
@@ -136,17 +126,15 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
 
   function handleSellSideOffer(offer){
     // Player is selling; buyer has lastBuyerOffer and buyer budget near market
-  const B = (buyer && buyer.budget) ? buyer.budget : Math.round(subject.estimatedResale * (0.9 + Math.random()*0.2)); // buyer max around market
+    const B = Math.round(car.estimatedResale * (0.9 + Math.random()*0.2)); // buyer max around market
     // if player over asks beyond budget, buyer walks
     if(offer > B){
       addLog(`You asked $${offer} which is above buyer's max ($${B}). Buyer walks.`);
-      // remove buyer from listing
-      if(onRemoveBuyer && buyer){ onRemoveBuyer(subject.id, buyer.id); }
       setPatience(0);
       return;
     }
     // if offer within small margin of buyer offer, buyer may accept
-  const io = lastBuyerOffer || computeInitialBuyerOffer(subject);
+    const io = lastBuyerOffer || computeInitialBuyerOffer(car);
     const gap = offer - io;
     // if offer is large jump from io, buyer may stand firm
     if(gap > io*0.25 && Math.random() < 0.6){
@@ -172,7 +160,8 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
     // if buyerNext is close enough to offer, buyer may accept
     if(Math.abs(buyerNext - offer) <= Math.round(Math.max(50, offer*0.05))){
       addLog(`Buyer accepts $${buyerNext}. Deal done.`);
-      onSell(subject.id, buyer && buyer.id, buyerNext);
+      const buyerId = modalBuyer?.id || null;
+      onSell(car.id, buyerId, buyerNext);
       return;
     }
   }
@@ -189,7 +178,8 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   function acceptBuyerOffer(){
     if(!lastBuyerOffer) return;
     addLog(`You accept buyer's offer $${lastBuyerOffer}. Deal done.`);
-    onSell(subject.id, buyer && buyer.id, lastBuyerOffer);
+    const buyerId = modalBuyer?.id || null;
+    onSell(car.id, buyerId, lastBuyerOffer);
   }
 
   function declineCounter(){
@@ -210,8 +200,6 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   useEffect(()=>{
     if(patience<=0){
       addLog("Negotiation ended: party walked away.");
-      // if this was a sell flow and buyer exists, remove the buyer from listing
-      if(side==="sell" && onRemoveBuyer && buyer){ onRemoveBuyer(subject.id, buyer.id); }
     }
     // eslint-disable-next-line
   },[patience]);
@@ -222,10 +210,10 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
         <h3 style={{marginTop:0}}>{side==="buy" ? "Buying — Negotiation" : "Selling — Negotiation"}</h3>
         <div style={{display:"flex",gap:12}}>
           <div style={{flex:1}}>
-            <div style={{fontWeight:700}}>{subject.year} {subject.make} {subject.model}</div>
-            <div className="small">Mileage: {subject.mileage.toLocaleString()} • Cond: {subject.condition}/5</div>
-            <div className="small">Base/est: ${subject.base.toLocaleString()} • Est resale: ${subject.estimatedResale.toLocaleString()}</div>
-            {subject.damages && subject.damages.length>0 ? <div className="small">Damages: {subject.damages.map(d=>d.type+"($"+d.cost+")").join(", ")}</div> : null}
+            <div style={{fontWeight:700}}>{car.year} {car.make} {car.model}</div>
+            <div className="small">Mileage: {car.mileage.toLocaleString()} • Cond: {car.condition}/5</div>
+            <div className="small">Base/est: ${car.base.toLocaleString()} • Est resale: ${car.estimatedResale.toLocaleString()}</div>
+            {car.damages && car.damages.length>0 ? <div className="small">Damages: {car.damages.map(d=>d.type+"($"+d.cost+")").join(", ")}</div> : null}
             <div style={{marginTop:8}} className="small">Patience: {patience}</div>
             <div style={{marginTop:8}} className="small">Round: {round}</div>
           </div>
@@ -251,9 +239,6 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
               </>
             ) : (
               <>
-                {buyer ? (
-                  <div className="small" style={{marginBottom:6}}>Buyer: <strong>{buyer.id}</strong> • Budget: <strong>${buyer.budget}</strong></div>
-                ) : null}
                 {lastBuyerOffer ? (
                   <div style={{marginBottom:8}}>
                     <div className="small">Buyer offered <strong>${lastBuyerOffer}</strong></div>
