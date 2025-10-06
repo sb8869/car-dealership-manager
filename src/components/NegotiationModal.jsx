@@ -10,7 +10,18 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   // support older shape where `modal.car` might be present
   const car = subject || (modal && modal.car);
   const [round, setRound] = useState(1);
-  const [patience, setPatience] = useState(side==="buy"? randInt(3,5): randInt(2,3));
+  // establish initial patience; if modalBuyer has a persona, bias patience accordingly
+  const initialPatience = (() => {
+    if(side === 'sell' && modalBuyer && modalBuyer.persona){
+      const p = modalBuyer.persona;
+      if(p === 'collector') return 3 + randInt(0,2);
+      if(p === 'realist') return 2 + randInt(0,2);
+      if(p === 'bargain') return 1 + randInt(0,1);
+      if(p === 'impulse') return 1 + randInt(0,1);
+    }
+    return side === "buy" ? randInt(3,5) : randInt(2,3);
+  })();
+  const [patience, setPatience] = useState(initialPatience);
   const [log, setLog] = useState([]);
   const [currentPlayerOffer, setCurrentPlayerOffer] = useState("");
   const [lastBuyerOffer, setLastBuyerOffer] = useState(null);
@@ -23,7 +34,8 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   function handleSellCounterValue(val){
     const price = Math.round(Number(val));
     if(!price || price<=0){ alert('Enter a valid counter'); return; }
-    const B = Math.round(car.estimatedResale * (0.9 + Math.random()*0.2));
+  // use the actual buyer budget if available; fall back to a heuristic otherwise
+  const B = (modalBuyer && typeof modalBuyer.budget === 'number') ? Math.round(modalBuyer.budget) : Math.round(car.estimatedResale * (0.9 + Math.random()*0.2));
     if(price > B){
       addLog(`Countered $${price} above buyer's max ($${B}). Buyer walks.`);
       if(typeof onRemoveBuyer === 'function' && modalBuyer){ try{ onRemoveBuyer(car.id, modalBuyer.id); }catch(e){} }
@@ -34,7 +46,17 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
       return;
     }
     const io = lastBuyerOffer || computeInitialBuyerOffer(car);
-    const willAccept = Math.random() < (0.25 + 0.5*(io / price));
+    // persona affects acceptance probability
+    let personaFactor = 1.0;
+    if(modalBuyer && modalBuyer.persona){
+      const p = modalBuyer.persona;
+      if(p === 'collector') personaFactor = 1.2;
+      if(p === 'impulse') personaFactor = 1.15;
+      if(p === 'bargain') personaFactor = 0.85;
+      if(p === 'realist') personaFactor = 1.0;
+    }
+    const baseProb = 0.25 + 0.5*(io / price);
+    const willAccept = Math.random() < Math.min(0.98, baseProb * personaFactor);
     if(willAccept){
       addLog(`Buyer ${modalBuyer?.id || ''} accepts your counter $${price}. Deal.`);
       const buyerId = modalBuyer?.id || null;
@@ -68,19 +90,33 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   // prefill counter input when a buyer offer appears (suggest +5%)
   useEffect(()=>{
     if(lastBuyerOffer){
-      const suggestion = Math.round(lastBuyerOffer * 1.05);
+      // prefer the listing price as the initial counter so players can quickly pick list price
+      const suggestion = (car && car.listPrice) ? Math.round(car.listPrice) : Math.round(lastBuyerOffer * 1.05);
       setCounterValue(String(suggestion));
     }
   },[lastBuyerOffer]);
+
+  // prefill buy-side counter input with seller ask or current seller counter when buying
+  useEffect(()=>{
+    if(side === 'buy'){
+      const amount = sellerCounter || (car && car.asking) || '';
+      if(amount){ setBuyCounterValue(String(Math.round(amount))); }
+    }
+  },[side, sellerCounter, car]);
 
   function addLog(text){
     setLog(l=>[...l, {round:round, text}]);
   }
 
   function computeInitialBuyerOffer(car){
-    // IO = 15-25% below list price capped at buyer budget (simulate buyer budget near market)
     const L = car.listPrice || car.estimatedResale || car.base;
-    const percent = 0.15 + Math.random()*0.1;
+    // persona-aware initial offer if modalBuyer provided
+    const persona = modalBuyer && modalBuyer.persona ? modalBuyer.persona : null;
+    let percent = 0.18 + Math.random()*0.07; // default 18-25%
+    if(persona === 'bargain') percent = 0.25 + Math.random()*0.15; // 25-40%
+    if(persona === 'realist') percent = 0.15 + Math.random()*0.12; // 15-27%
+    if(persona === 'impulse') percent = 0.06 + Math.random()*0.12; // 6-18%
+    if(persona === 'collector') percent = 0.05 + Math.random()*0.15; // 5-20%
     const io = Math.round(L*(1-percent));
     return io;
   }
@@ -232,7 +268,8 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
 
   function handleSellSideOffer(offer){
     // Player is selling; buyer has lastBuyerOffer and buyer budget near market
-    const B = Math.round(car.estimatedResale * (0.9 + Math.random()*0.2)); // buyer max around market
+  // prefer the modal buyer's known budget if present
+  const B = (modalBuyer && typeof modalBuyer.budget === 'number') ? Math.round(modalBuyer.budget) : Math.round(car.estimatedResale * (0.9 + Math.random()*0.2)); // buyer max around market
     // if player over asks beyond budget, buyer walks
     if(offer > B){
       addLog(`You asked $${offer} which is above buyer's max ($${B}). Buyer walks.`);
@@ -360,9 +397,9 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                   <div style={{padding:8,border:'1px solid #eee',borderRadius:6, marginBottom:8}}>
                     <div style={{fontWeight:700, marginBottom:6}}>{sellerCounter ? 'Seller countered' : 'Seller asks'}</div>
                     <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${sellerCounter || car.asking}</div>
-                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
                       <button className="btn" onClick={sellerCounter ? acceptSellerCounter : acceptSellerAsk} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={sellerWalked || patience<=0 || ((sellerCounter ? sellerCounter : car.asking) > cash)}>Accept</button>
-                      <input className="input" placeholder="Counter amount" value={buyCounterValue} onChange={e=>setBuyCounterValue(e.target.value)} style={{width:120}} />
+                      <input className="input" placeholder="Counter amount" value={buyCounterValue} onChange={e=>setBuyCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
                       <button className="btn" onClick={()=>handleBuyCounterValue(buyCounterValue)} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#fd7e14',border:'none'}} disabled={sellerWalked || patience<=0}>Counter</button>
                       <button className="btn secondary" onClick={declineCounter} style={(sellerWalked || patience<=0) ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={sellerWalked || patience<=0}>Decline</button>
                     </div>
@@ -376,6 +413,11 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                     <div style={{padding:8,border:'1px solid #eee',borderRadius:6}}>
                       <div style={{fontWeight:700, marginBottom:6}}>Buyer offered</div>
                       <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${lastBuyerOffer}</div>
+                      {modalBuyer && typeof modalBuyer.budget === 'number' ? (
+                        <div className="small" style={{marginBottom:8}}>Budget (max): ${modalBuyer.budget.toLocaleString()}</div>
+                      ) : (car.estimatedResale ? (
+                        <div className="small" style={{marginBottom:8}}>Budget (est): ${Math.round(car.estimatedResale).toLocaleString()}</div>
+                      ) : null)}
                       {typeof car.purchasePrice !== 'undefined' ? (()=>{
                         const pp = Number(car.purchasePrice);
                         const offerProfit = lastBuyerOffer ? Math.round(lastBuyerOffer - pp) : null;
@@ -392,9 +434,9 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                           </div>
                         );
                       })() : null}
-                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
                         <button className="btn" onClick={acceptBuyerOffer} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={buyerWalked}>Accept</button>
-                        <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} style={{width:120}} />
+                        <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
                         <button className="btn" onClick={()=>handleSellCounterValue(counterValue)} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed',border:'none'} : {background:'#fd7e14',border:'none'}} disabled={buyerWalked}>Counter</button>
                         <button className="btn secondary" onClick={declineCounter} style={buyerWalked ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={buyerWalked}>Decline</button>
                       </div>

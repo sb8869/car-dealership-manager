@@ -180,9 +180,41 @@ export default function App(){
           else wavesize = Math.random() < 0.25 ? 1 : 0;
         }
         for(let i=0;i<wavesize;i++){
-          const budget = Math.round(M * (0.8 + Math.random()*0.4));
-          const io = Math.min(Math.round(listing.listPrice * (1 - (0.15 + Math.random()*0.15))), budget);
-          buyers.push({ id: "b_"+Math.random().toString(36).slice(2,8), budget, offer: io, patience: 2 + Math.floor(Math.random()*2), interest: Math.random() });
+          // buyer persona: bargain, realist, impulse, collector
+          const personaRoll = Math.random();
+          let persona = 'realist';
+          if(personaRoll < 0.35) persona = 'bargain';
+          else if(personaRoll < 0.70) persona = 'realist';
+          else if(personaRoll < 0.95) persona = 'impulse';
+          else persona = 'collector';
+
+          // persona influences budget multiplier
+          let budgetMult = 0.9;
+          if(persona === 'bargain') budgetMult = 0.7 + Math.random()*0.25; // 0.70-0.95
+          if(persona === 'realist') budgetMult = 0.8 + Math.random()*0.3; // 0.80-1.10
+          if(persona === 'impulse') budgetMult = 0.9 + Math.random()*0.4; // 0.90-1.30
+          if(persona === 'collector') budgetMult = 1.05 + Math.random()*0.6; // 1.05-1.65
+
+          const budget = Math.round(M * budgetMult);
+
+          // initial offer depends on persona (fraction below list)
+          let ioPct = 0.18 + Math.random()*0.07; // default 18-25% below
+          if(persona === 'bargain') ioPct = 0.25 + Math.random()*0.15; // 25-40%
+          if(persona === 'realist') ioPct = 0.15 + Math.random()*0.12; // 15-27%
+          if(persona === 'impulse') ioPct = 0.06 + Math.random()*0.12; // 6-18%
+          if(persona === 'collector') ioPct = 0.05 + Math.random()*0.15; // 5-20%
+
+          const io = Math.min(Math.round(listing.listPrice * (1 - ioPct)), budget);
+
+          // patience: collectors more patient, bargain/impulse less
+          let patience = 2 + Math.floor(Math.random()*2);
+          if(persona === 'bargain') patience = 1 + Math.floor(Math.random()*2);
+          if(persona === 'realist') patience = 2 + Math.floor(Math.random()*2);
+          if(persona === 'impulse') patience = 1 + Math.floor(Math.random()*2);
+          if(persona === 'collector') patience = 3 + Math.floor(Math.random()*2);
+
+          const interest = Math.random();
+          buyers.push({ id: "b_"+Math.random().toString(36).slice(2,8), budget, offer: io, patience, interest, persona });
         }
         // buyers appended to listing
         const nowt = Date.now();

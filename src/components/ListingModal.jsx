@@ -92,7 +92,10 @@ export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refr
                   {listing.buyers.map(b => (
                     <div key={b.id} className="car-card" style={{marginTop:8}}>
                       <div>
-                        <div style={{fontWeight:700}}>Buyer {b.id}</div>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <div style={{fontWeight:700}}>Buyer {b.id}</div>
+                          <div style={{fontSize:11, padding:'2px 8px', borderRadius:10, background:'#f1f5f9', color:'#0f172a'}}>{b.persona || 'realist'}</div>
+                        </div>
                         <div className="small">Offer: ${b.offer} • Budget: ${b.budget} • Patience: {b.patience}</div>
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:8}}>
