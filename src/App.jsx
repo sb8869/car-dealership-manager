@@ -308,6 +308,12 @@ export default function App(){
                         <HeatBadge listing={l} />
                       </div>
                       <div className="small">List: ${l.listPrice.toLocaleString()} • Est resale: ${l.estimatedResale.toLocaleString()}</div>
+                      {typeof l.purchasePrice !== 'undefined' ? (
+                        <> 
+                          <div className="small">Purchased for: ${Number(l.purchasePrice).toLocaleString()}</div>
+                          {(() => { const pp = Number(l.purchasePrice); const profit = Math.round(l.listPrice - pp); const pct = pp ? Math.round((profit/pp)*100) : 0; const color = profit >= 0 ? '#28a745' : '#b21f2d'; return (<div className="small" style={{color,fontWeight:700}}>Profit: ${profit.toLocaleString()} ({pct >= 0 ? `+${pct}%` : `${pct}%`})</div>); })()}
+                        </>
+                      ) : null}
                       <div className="small">Buyers: {l.buyers?.length || 0}</div>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -348,6 +354,12 @@ export default function App(){
                         <HeatBadge listing={l} />
                       </div>
                       <div className="small">List: ${l.listPrice.toLocaleString()} • Est resale: ${l.estimatedResale.toLocaleString()}</div>
+                      {typeof l.purchasePrice !== 'undefined' ? (
+                        <> 
+                          <div className="small">Purchased for: ${Number(l.purchasePrice).toLocaleString()}</div>
+                          {(() => { const pp = Number(l.purchasePrice); const profit = Math.round(l.listPrice - pp); const pct = pp ? Math.round((profit/pp)*100) : 0; const color = profit >= 0 ? '#28a745' : '#b21f2d'; return (<div className="small" style={{color,fontWeight:700}}>Profit: ${profit.toLocaleString()} ({pct >= 0 ? `+${pct}%` : `${pct}%`})</div>); })()}
+                        </>
+                      ) : null}
                       <div className="small">Buyers: {l.buyers?.length || 0}</div>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>

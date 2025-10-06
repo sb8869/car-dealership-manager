@@ -344,6 +344,9 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
             <button onClick={onCancel} aria-label="Close" style={{position:'absolute',top:12,right:12,background:'transparent',border:'none',fontSize:18,cursor:'pointer'}}>✕</button>
             <div className="small">Mileage: {car.mileage.toLocaleString()} • Cond: {car.condition}/5</div>
             <div className="small">Base/est: ${car.base.toLocaleString()} • Est resale: ${car.estimatedResale.toLocaleString()}</div>
+            {side === 'sell' && typeof car.purchasePrice !== 'undefined' ? (
+              <div className="small">Purchased for: ${Number(car.purchasePrice).toLocaleString()}</div>
+            ) : null}
             {car.damages && car.damages.length>0 ? <div className="small">Damages: {car.damages.map(d=>d.type+"($"+d.cost+")").join(", ")}</div> : null}
             <div style={{marginTop:8}} className="small">Patience: {patience}</div>
             <div style={{marginTop:8}} className="small">Round: {round}</div>
@@ -373,6 +376,22 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                     <div style={{padding:8,border:'1px solid #eee',borderRadius:6}}>
                       <div style={{fontWeight:700, marginBottom:6}}>Buyer offered</div>
                       <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${lastBuyerOffer}</div>
+                      {typeof car.purchasePrice !== 'undefined' ? (()=>{
+                        const pp = Number(car.purchasePrice);
+                        const offerProfit = lastBuyerOffer ? Math.round(lastBuyerOffer - pp) : null;
+                        const offerPct = offerProfit !== null && pp ? Math.round((offerProfit/pp)*100) : null;
+                        const counterPrice = Number(counterValue) || null;
+                        const counterProfit = counterPrice ? Math.round(counterPrice - pp) : null;
+                        const counterPct = counterProfit !== null && pp ? Math.round((counterProfit/pp)*100) : null;
+                        const offerColor = offerProfit >= 0 ? '#28a745' : '#b21f2d';
+                        const counterColor = counterProfit >= 0 ? '#28a745' : '#b21f2d';
+                        return (
+                          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+                            {offerProfit !== null ? <div style={{fontSize:12,color:offerColor,background: offerColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${offerColor}33`}}>Offer: ${offerProfit.toLocaleString()} ({offerPct >= 0 ? `+${offerPct}%` : `${offerPct}%`})</div> : null}
+                            {counterProfit !== null ? <div style={{fontSize:12,color:counterColor,background: counterColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${counterColor}33`}}>Counter: ${counterProfit.toLocaleString()} ({counterPct >= 0 ? `+${counterPct}%` : `${counterPct}%`})</div> : null}
+                          </div>
+                        );
+                      })() : null}
                       <div style={{display:'flex',gap:8,alignItems:'center'}}>
                         <button className="btn" onClick={acceptBuyerOffer} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={buyerWalked}>Accept</button>
                         <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} style={{width:120}} />
