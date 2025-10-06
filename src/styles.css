@@ -18,6 +18,16 @@ body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Rob
 .list{display:flex;flex-direction:column;gap:10px;}
 .car-card{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:6px;border:1px solid #eee;background:#fff;}
 .small{font-size:13px;color:var(--muted);}
+
+/* allow flex children to shrink below their content width so long text can wrap inside */
+.car-card > div { min-width: 0; }
+.car-card .small { word-break: break-word; overflow-wrap: break-word; }
+
+/* deal badges: limit width and allow truncation so they don't push other content out */
+.deal-badge{max-width:100%;display:inline-block;padding:4px 8px;border-radius:12;font-size:12px;font-weight:700}
+
+/* safety: make sure card doesn't overflow the container */
+.car-card{overflow:visible}
 .btn{background:var(--accent);color:white;border:none;padding:8px 10px;border-radius:6px;cursor:pointer;}
 .btn.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent);}
 .cash{font-weight:700;color:var(--accent);}
@@ -46,4 +56,9 @@ body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Rob
 .carousel-track{display:flex;gap:10px;overflow:hidden}
 .carousel-card{min-width:220px;flex:0 0 220px}
 .carousel-controls{display:flex;gap:6px}
+
+/* clickable cards: show pointer and subtle lift on hover/focus for affordance */
+.clickable{cursor:pointer}
+.clickable:focus{outline:3px solid rgba(3,79,132,0.15); outline-offset:3px; box-shadow:0 4px 10px rgba(3,79,132,0.06)}
+.clickable:hover{box-shadow:0 6px 18px rgba(2,56,110,0.06); transform:translateY(-2px)}
 

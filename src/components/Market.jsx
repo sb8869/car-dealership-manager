@@ -54,26 +54,52 @@ export default function Market({market, onInspect, mode = 'all'}){
               {mode === 'market' ? (
                 // fill width: let cards flex to occupy space
                 visibleFeatured.map((f)=> (
-                  <div key={f.id} className={`card carousel-card`} style={{minWidth:140, flex:'1 1 0', maxWidth:400, minHeight:140, display:'flex', flexDirection:'column', justifyContent:'space-between'}}>
+                  <div key={f.id} className={`card carousel-card clickable`} onClick={()=>onInspect(f)} onKeyDown={(e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onInspect(f); } }} tabIndex={0} aria-label={`Inspect ${f.year} ${f.make} ${f.model}`} style={{minWidth:140, flex:'1 1 0', maxWidth:400, minHeight:140, display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer'}}>
                       <div>
                         <div style={{fontWeight:700}}>{f.year} {f.make} {f.model}</div>
                         <div className="small">Asking: ${f.asking.toLocaleString()}</div>
-                      </div>
-                      <div style={{marginTop:8}}>
-                        <button className="btn" onClick={()=>onInspect(f)}>Inspect</button>
+                          <div className="small">Est resale: ${f.estimatedResale.toLocaleString()}</div>
+                          {(() => {
+                            const er = f.estimatedResale || f.base || 0;
+                            if(!er) return null;
+                            const ratio = f.asking / er;
+                            // tiers: <0.85 great, <0.95 good, <=1.05 neutral, <=1.15 bad, >1.15 overpriced
+                            if(ratio < 0.85){
+                            return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#146c43',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Great deal</div>;
+                            }
+                            if(ratio < 0.95){
+                              return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#28a745',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Good deal</div>;
+                            }
+                            if(ratio <= 1.05){
+                              return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#6c757d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Neutral</div>;
+                            }
+                            if(ratio <= 1.15){
+                              return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#fd7e14',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Bad deal</div>;
+                            }
+                            return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#b21f2d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Overpriced</div>;
+                          })()}
                       </div>
                     </div>
                 ))
               ) : (
                 // compact/all mode: show a single active card centered
                 featured.length > 0 ? (
-                  <div key={featured[featuredIndex].id} className={`card carousel-card active`} style={{minWidth:220, maxWidth:360, margin:'0 auto', minHeight:160, display:'flex', flexDirection:'column', justifyContent:'space-between'}}>
+                  <div key={featured[featuredIndex].id} className={`card carousel-card active clickable`} onClick={()=>onInspect(featured[featuredIndex])} onKeyDown={(e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onInspect(featured[featuredIndex]); } }} tabIndex={0} aria-label={`Inspect ${featured[featuredIndex].year} ${featured[featuredIndex].make} ${featured[featuredIndex].model}`} style={{minWidth:220, maxWidth:360, margin:'0 auto', minHeight:160, display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer'}}>
                     <div>
                       <div style={{fontWeight:700}}>{featured[featuredIndex].year} {featured[featuredIndex].make} {featured[featuredIndex].model}</div>
                       <div className="small">Asking: ${featured[featuredIndex].asking.toLocaleString()}</div>
-                    </div>
-                    <div style={{marginTop:8}}>
-                      <button className="btn" onClick={()=>onInspect(featured[featuredIndex])}>Inspect</button>
+                      <div className="small">Est resale: ${featured[featuredIndex].estimatedResale.toLocaleString()}</div>
+                      {(() => {
+                        const f = featured[featuredIndex];
+                        const er = f.estimatedResale || f.base || 0;
+                        if(!er) return null;
+                        const ratio = f.asking / er;
+                        if(ratio < 0.85) return <div style={{display:'inline-block',marginTop:6,background:'#146c43',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Great deal</div>;
+                        if(ratio < 0.95) return <div style={{display:'inline-block',marginTop:6,background:'#28a745',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Good deal</div>;
+                        if(ratio <= 1.05) return <div style={{display:'inline-block',marginTop:6,background:'#6c757d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Neutral</div>;
+                        if(ratio <= 1.15) return <div style={{display:'inline-block',marginTop:6,background:'#fd7e14',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Bad deal</div>;
+                        return <div style={{display:'inline-block',marginTop:6,background:'#b21f2d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Overpriced</div>;
+                      })()}
                     </div>
                   </div>
                 ) : null
@@ -83,25 +109,34 @@ export default function Market({market, onInspect, mode = 'all'}){
         </div>
       </div>
       {market.map(car=>(
-        <div key={car.id} className="car-card" style={{minHeight:140, display:'flex', justifyContent:'space-between', alignItems:'stretch'}}>
+  <div key={car.id} className="car-card clickable" onClick={()=>onInspect(car)} onKeyDown={(e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onInspect(car); } }} tabIndex={0} aria-label={`Inspect ${car.year} ${car.make} ${car.model}`} style={{minHeight:140, display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer'}}>
           <div style={{flex:1}}>
             <div style={{fontWeight:700}}>{car.year} {car.make} {car.model}</div>
             <div className="small">Mileage: {car.mileage.toLocaleString()} • Cond: {car.condition}/5</div>
             <div className="small">Asking: ${car.asking.toLocaleString()}</div>
+            <div className="small">Est resale: ${car.estimatedResale.toLocaleString()}</div>
+            {/* badges moved below damages to avoid cutting off damage text */}
             {car.damages && car.damages.length>0 ? (
               (() => {
                 const total = car.damages.reduce((s,d)=>s + (d.cost||0), 0);
                 const warn = total > (car.estimatedResale || car.base || 0);
                 return (
-                  <div className="small" style={{marginTop:6,color: warn ? '#b21f2d' : '#444'}}>
+                  <div className="small" style={{marginTop:6,color: warn ? '#b21f2d' : '#444',wordBreak:'break-word',overflowWrap:'break-word'}}>
                     Damages: ${total.toLocaleString()} {warn ? '(⚠️ exceeds est. resale)' : ''}
                   </div>
                 );
               })()
             ) : null}
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:8, alignSelf:'center', marginLeft:12}}>
-            <button className="btn" onClick={()=>onInspect(car)}>Inspect</button>
+            {(() => {
+                const er = car.estimatedResale || car.base || 0;
+                if(!er) return null;
+                const ratio = car.asking / er;
+                if(ratio < 0.85) return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#146c43',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Great deal</div>;
+                if(ratio < 0.95) return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#28a745',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Good deal</div>;
+                if(ratio <= 1.05) return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#6c757d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Neutral</div>;
+                if(ratio <= 1.15) return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#fd7e14',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Bad deal</div>;
+                return <div className="deal-badge" style={{display:'inline-block',marginTop:6,background:'#b21f2d',color:'#fff',padding:'4px 8px',borderRadius:12,fontSize:12,fontWeight:700}}>Overpriced</div>;
+              })()}
           </div>
         </div>
       ))}
