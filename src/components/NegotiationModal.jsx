@@ -5,13 +5,13 @@ function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
 function pct(v){return Math.round(v*100)/100;}
 
-export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, onRemoveBuyer, onUpdateBuyerOffer, onRemoveMarketCar}){
+export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, onRemoveBuyer, onUpdateBuyerOffer, onRemoveMarketCar, onBuyInspection}){
   const {side, subject, buyer: modalBuyer} = modal || {};
   // support older shape where `modal.car` might be present
   const car = subject || (modal && modal.car);
   const [round, setRound] = useState(1);
-  // establish initial patience; if modalBuyer has a persona, bias patience accordingly
-  const initialPatience = (() => {
+  // establish initial patience once; store it in state so it doesn't change across re-renders
+  const [initialPatience] = useState(() => {
     if(side === 'sell' && modalBuyer && modalBuyer.persona){
       const p = modalBuyer.persona;
       if(p === 'collector') return 3 + randInt(0,2);
@@ -20,7 +20,7 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
       if(p === 'impulse') return 1 + randInt(0,1);
     }
     return side === "buy" ? randInt(3,5) : randInt(2,3);
-  })();
+  });
   const [patience, setPatience] = useState(initialPatience);
   const [log, setLog] = useState([]);
   const [currentPlayerOffer, setCurrentPlayerOffer] = useState("");
@@ -81,8 +81,7 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
       setLastBuyerOffer(io);
       addLog(`Buyer offers $${io}`);
     } else {
-      // buying: show initial seller stance
-      addLog(`Seller asks $${car.asking}`);
+      // buying: we intentionally do not auto-log the seller asking price to avoid cluttering the negotiation log
     }
     // eslint-disable-next-line
   },[]);
@@ -103,6 +102,16 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
       if(amount){ setBuyCounterValue(String(Math.round(amount))); }
     }
   },[side, sellerCounter, car]);
+
+  // helpers for UI rendering
+  const starString = (n=0) => {
+    const filled = '★'.repeat(Math.max(0, Math.min(5, n||0)));
+    const empty = '☆'.repeat(Math.max(0, 5 - Math.max(0, Math.min(5, n||0))));
+    return filled + empty;
+  };
+  const inspectCost = Math.round(Math.max(100, (car && car.estimatedRepairCost || 0) * 0.12));
+  const patiencePct = initialPatience ? Math.round((patience / initialPatience) * 100) : 0;
+  const patienceColor = patiencePct > 66 ? '#28a745' : (patiencePct > 33 ? '#fd7e14' : '#b21f2d');
 
   function addLog(text){
     setLog(l=>[...l, {round:round, text}]);
@@ -125,101 +134,15 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
     const offer = Math.round(Number(currentPlayerOffer));
     if(!offer || offer<=0){ alert("Enter a valid offer"); return; }
     if(side==="buy"){
-      // player buying from seller
+      // player buying from seller: delegate to existing buy-counter handler which contains the buy logic
       if(offer>cash){ alert("Not enough cash"); return; }
-      handleBuySideOffer(offer);
-    } else {
-      // player selling to buyer
-      handleSellSideOffer(offer);
-    }
-  }
-
-  function handleBuySideOffer(offer){
-    // Apply buyer-side negotiation matrix
-    const A = car.asking;
-    const R = car.reserve;
-    const gapPercent = (R - offer)/Math.max(1, R);
-    // insulting
-    if(offer <= R*0.6){
-      // insult: if the offer is extremely low relative to asking -> instant walk
-      const insultRatio = offer / Math.max(1, A);
-      const tinyAbsolute = Math.max(50, Math.round(A * 0.05));
-      if(offer <= tinyAbsolute || insultRatio < 0.05){
-        addLog(`You offered $${offer}. Seller is outraged and walks away immediately.`);
-        setPatience(0);
-        setSellerWalked(true);
-        // remove market car immediately if parent provided handler
-        if(typeof onRemoveMarketCar === 'function'){
-          try{ onRemoveMarketCar(car.id); }catch(e){}
-        }
-        return;
-      }
-
-      // otherwise a strong chance to walk, otherwise they may scoff and counter
-      if(Math.random() < 0.9){
-        addLog(`You offered $${offer}. Seller is insulted and walks away.`);
-        setPatience(0);
-        setSellerWalked(true);
-        if(typeof onRemoveMarketCar === 'function'){
-          try{ onRemoveMarketCar(car.id); }catch(e){}
-        }
-        return;
-      } else {
-        const counter = Math.round(A - (Math.random()*0.05*A));
-        setSellerCounter(counter);
-        addLog(`You offered $${offer}. Seller scoffs and counters $${counter}.`);
-        setPatience(p=>p-2);
-        setRound(r=>r+1);
-        return;
-      }
-    }
-
-    // If offer >= ask -> instant accept maybe (but per rules seller may still counter)
-    if(offer >= A){
-      // seller accepts surprisingly
-      addLog(`You offered $${offer}. Seller accepts. Deal done.`);
-      onBuy(subject, offer);
+      // handleBuyCounterValue can accept a number/string and will run the buy-side flow
+      handleBuyCounterValue(String(offer));
       return;
     }
-
-    // If offer >= R and early round seller may still counter above R (not auto-accept)
-    if(offer >= R){
-      // seller attempts to push for more unless patience low
-      if(patience > 1 && Math.random() < 0.7){
-        // counter somewhere between A and offer, biased to A
-        const gap = A - offer;
-        const dropPct = 0.05 + Math.random()*0.15;
-        const counter = Math.round(A - dropPct* (A - offer));
-        setSellerCounter(counter);
-        addLog(`You offered $${offer}. Seller doesn't accept yet and counters $${counter}.`);
-        setPatience(p=>p-1);
-        setRound(r=>r+1);
-        return;
-      } else {
-        addLog(`You offered $${offer}. Seller accepts. Deal done.`);
-        onBuy(subject, offer);
-        return;
-      }
-    }
-
-    // offer < R and not insulting
-    // acceptance probability based on closeness to reserve
-    const acceptProb = clamp(0.05 + 0.9*(offer/R), 0, 0.95);
-    if(Math.random() < acceptProb){
-      addLog(`You offered $${offer}. Seller surprisingly accepts. Deal done.`);
-      onBuy(subject, offer);
-      return;
-    } else {
-      // seller counters towards asking, random 5-15% of gap
-      const gap = A - offer;
-      const pct = 0.05 + Math.random()*0.10; // 5-15%
-      const counter = Math.round(A - pct*gap);
-      setSellerCounter(counter);
-      addLog(`You offered $${offer}. Seller declines and counters $${counter}.`);
-      setPatience(p=>p-1);
-      setRound(r=>r+1);
-      return;
-    }
+    // selling side: delegate to sell-side handler
+    handleSellSideOffer(offer);
+    return;
   }
 
   function handleBuyCounterValue(val){
@@ -374,50 +297,103 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
   return (
     <div className="modal">
     <div className="card" style={{position:'relative'}}>
-        <h3 style={{marginTop:0}}>{side==="buy" ? "Buying — Negotiation" : "Selling — Negotiation"}</h3>
-        <div style={{display:"flex",gap:12}}>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700}}>{car.year} {car.make} {car.model}</div>
-            <button onClick={onCancel} aria-label="Close" style={{position:'absolute',top:12,right:12,background:'transparent',border:'none',fontSize:18,cursor:'pointer'}}>✕</button>
-            <div className="small">Mileage: {car.mileage.toLocaleString()} • Cond: {car.condition}/5</div>
-            <div className="small">Base/est: ${car.base.toLocaleString()} • Est resale: ${car.estimatedResale.toLocaleString()}</div>
-            {side === 'sell' && typeof car.purchasePrice !== 'undefined' ? (
-              <div className="small">Purchased for: ${Number(car.purchasePrice).toLocaleString()}</div>
-            ) : null}
-            {car.damages && car.damages.length>0 ? <div className="small">Damages: {car.damages.map(d=>d.type+"($"+d.cost+")").join(", ")}</div> : null}
-            <div style={{marginTop:8}} className="small">Patience: {patience}</div>
-            <div style={{marginTop:8}} className="small">Round: {round}</div>
-          </div>
+      {/* Close X in top-right */}
+      <button aria-label="Close" onClick={(e)=>{ e.stopPropagation(); if(typeof onCancel==='function') onCancel(); }} style={{position:'absolute',right:10,top:8,border:'none',background:'transparent',fontSize:18,cursor:'pointer',color:'#666'}}>✕</button>
+          <div style={{display:"flex",flexDirection:'column',gap:12, width: '100%'}}>
+              <div style={{display:"flex",flexDirection:'column',gap:12}}>
+                {side === "buy" ? (
+                  <>
+                    {/* Redesigned buy card per requested layout */}
+                    <div style={{padding:12,border:'1px solid #eee',borderRadius:8, marginBottom:8, background:'#fff'}}>
+                      {/* Header */}
+                      <div style={{fontSize:18,fontWeight:800, marginBottom:4}}>{car.year} {car.make} {car.model}</div>
+                      <div className="small" style={{color:'#666', marginBottom:10}}>Negotiation in progress</div>
 
-          <div style={{width:360, minWidth:260}}>
-            <div style={{display:"flex",flexDirection:'column',gap:12}}>
-              {side === "buy" ? (
-                <>
-                  {/* Seller ask / counter card (mirrors sell-side buyer card) */}
-                  <div style={{padding:8,border:'1px solid #eee',borderRadius:6, marginBottom:8}}>
-                    <div style={{fontWeight:700, marginBottom:6}}>{sellerCounter ? 'Seller countered' : 'Seller asks'}</div>
-                    <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${sellerCounter || car.asking}</div>
-                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                      <button className="btn" onClick={sellerCounter ? acceptSellerCounter : acceptSellerAsk} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={sellerWalked || patience<=0 || ((sellerCounter ? sellerCounter : car.asking) > cash)}>Accept</button>
-                      <input className="input" placeholder="Counter amount" value={buyCounterValue} onChange={e=>setBuyCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
-                      <button className="btn" onClick={()=>handleBuyCounterValue(buyCounterValue)} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#fd7e14',border:'none'}} disabled={sellerWalked || patience<=0}>Counter</button>
-                      <button className="btn secondary" onClick={declineCounter} style={(sellerWalked || patience<=0) ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={sellerWalked || patience<=0}>Decline</button>
+                      {/* Section 1 — Quick Snapshot */}
+                      <div style={{display:'flex',justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderTop:'1px solid #f6f6f6'}}>
+                        <div style={{fontSize:14,fontWeight:700}}>Mileage
+                          <div style={{fontWeight:400,fontSize:14}}>{car.mileage.toLocaleString()}</div>
+                        </div>
+                        <div style={{textAlign:'right'}}>
+                          <div style={{fontSize:14,fontWeight:700}}>Condition</div>
+                          <div style={{color:'#f5a623',fontSize:16}}>{starString(car.condition)}</div>
+                        </div>
+                      </div>
+
+                      {/* Section 2 — Financials (centered, emphasized) */}
+                      <div style={{textAlign:'center', padding:'12px 0', borderTop:'1px solid #f6f6f6'}}>
+                        <div style={{fontSize:28,fontWeight:800, color:'#111'}}>${(sellerCounter || car.asking).toLocaleString()}</div>
+                          <div className="small" style={{color:'#666'}}>Est. Resale: ${car.estimatedResale.toLocaleString()}</div>
+                      </div>
+
+                      {/* Section 3 — Damages / Inspection */}
+                      <div style={{borderTop:'1px solid #f6f6f6', paddingTop:10, marginTop:8}}>
+                        <div style={{fontWeight:700, marginBottom:6}}>Damages</div>
+                        {car.inspected && car.damages && car.damages.length>0 ? (
+                          <div style={{paddingLeft:8}}>
+                            {car.damages.map((d,idx)=> (
+                              <div key={idx} className="small">{d.type === 'body' ? '🚗💥' : '🔧'} {d.type.charAt(0).toUpperCase()+d.type.slice(1)}: -${d.cost.toLocaleString()}</div>
+                            ))}
+                          </div>
+                        ) : car.inspected && (!car.damages || car.damages.length===0) ? (
+                          <div className="small" style={{color:'#666', paddingLeft:8}}>No damages reported.</div>
+                        ) : (
+                          <div className="small" style={{color:'#666', paddingLeft:8}}>Report unavailable — purchase Car Report to reveal damages.</div>
+                        )}
+                        {!car.inspected ? (
+                          <div style={{marginTop:8}}>
+                            <button className="btn" onClick={(e)=>{ e.stopPropagation(); if(typeof onBuyInspection === 'function'){ if(inspectCost > cash){ alert('Not enough cash for inspection'); return; } onBuyInspection(car.id, inspectCost); } }} style={{background:'#17a2b8'}} disabled={inspectCost > cash}>Purchase Car Report (${inspectCost})</button>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {/* Section 4 — Negotiation status / patience */}
+                      <div style={{marginTop:12}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                          <div className="small">Negotiation status</div>
+                        </div>
+                        <div style={{height:10, background:'#f1f1f1', borderRadius:6, marginTop:6, overflow:'hidden'}}>
+                          <div style={{width: Math.max(0, Math.min(100, patiencePct)) + '%', height:'100%', background:patienceColor}} />
+                        </div>
+                      </div>
+
+                      {/* Section 5 — Negotiation controls */}
+                      <div style={{marginTop:12}}>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <button className="btn" onClick={sellerCounter ? acceptSellerCounter : acceptSellerAsk} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={sellerWalked || patience<=0 || ((sellerCounter ? sellerCounter : car.asking) > cash)}>Accept</button>
+                          <input className="input" placeholder="Counter amount" value={buyCounterValue} onChange={e=>setBuyCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
+                          <button className="btn" onClick={()=>handleBuyCounterValue(buyCounterValue)} style={(sellerWalked || patience<=0) ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#fd7e14',border:'none'}} disabled={sellerWalked || patience<=0}>Counter</button>
+                          <button className="btn secondary" onClick={declineCounter} style={(sellerWalked || patience<=0) ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={sellerWalked || patience<=0}>Decline</button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                    {/* end buy card */}
+                  </>
+                ) : (
+                  <>
+                    {/* Redesigned sell card (same layout as buy but no damages/inspection) */}
+                    <div style={{padding:12,border:'1px solid #eee',borderRadius:8, marginBottom:8, background:'#fff'}}>
+                      <div style={{fontSize:18,fontWeight:800, marginBottom:4}}>{car.year} {car.make} {car.model}</div>
+                      <div className="small" style={{color:'#666', marginBottom:10}}>Negotiation in progress</div>
 
-                  {/* Quick offer removed — use Accept/Counter/Decline controls only */}
-                </>
-              ) : (
-                <>
-                  {lastBuyerOffer ? (
-                    <div style={{padding:8,border:'1px solid #eee',borderRadius:6}}>
-                      <div style={{fontWeight:700, marginBottom:6}}>Buyer offered</div>
-                      <div style={{fontSize:20,fontWeight:700, marginBottom:8}}>${lastBuyerOffer}</div>
-                      {modalBuyer && typeof modalBuyer.budget === 'number' ? (
-                        <div className="small" style={{marginBottom:8}}>Budget (max): ${modalBuyer.budget.toLocaleString()}</div>
-                      ) : (car.estimatedResale ? (
-                        <div className="small" style={{marginBottom:8}}>Budget (est): ${Math.round(car.estimatedResale).toLocaleString()}</div>
-                      ) : null)}
+                      {/* Snapshot */}
+                      <div style={{display:'flex',justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderTop:'1px solid #f6f6f6'}}>
+                        <div style={{fontSize:14,fontWeight:700}}>Mileage
+                          <div style={{fontWeight:400,fontSize:14}}>{car.mileage.toLocaleString()}</div>
+                        </div>
+                        <div style={{textAlign:'right'}}>
+                          <div style={{fontSize:14,fontWeight:700}}>Condition</div>
+                          <div style={{color:'#f5a623',fontSize:16}}>{starString(car.condition)}</div>
+                        </div>
+                      </div>
+
+                      {/* Financials (centered) */}
+                      <div style={{textAlign:'center', padding:'12px 0', borderTop:'1px solid #f6f6f6'}}>
+                        <div style={{fontSize:28,fontWeight:800, color:'#111'}}>${lastBuyerOffer ? lastBuyerOffer.toLocaleString() : ((car.listPrice || car.purchasePrice || 0).toLocaleString())}</div>
+                        <div className="small" style={{color:'#666'}}>Purchase Price: ${typeof car.purchasePrice !== 'undefined' ? Number(car.purchasePrice).toLocaleString() : '-'}</div>
+                      </div>
+
+                      {/* Profit / counters (if purchasePrice known) */}
                       {typeof car.purchasePrice !== 'undefined' ? (()=>{
                         const pp = Number(car.purchasePrice);
                         const offerProfit = lastBuyerOffer ? Math.round(lastBuyerOffer - pp) : null;
@@ -428,39 +404,51 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                         const offerColor = offerProfit >= 0 ? '#28a745' : '#b21f2d';
                         const counterColor = counterProfit >= 0 ? '#28a745' : '#b21f2d';
                         return (
-                          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+                          <div style={{display:'flex',gap:8,alignItems:'center',marginTop:8,marginBottom:4}}>
                             {offerProfit !== null ? <div style={{fontSize:12,color:offerColor,background: offerColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${offerColor}33`}}>Offer: ${offerProfit.toLocaleString()} ({offerPct >= 0 ? `+${offerPct}%` : `${offerPct}%`})</div> : null}
                             {counterProfit !== null ? <div style={{fontSize:12,color:counterColor,background: counterColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${counterColor}33`}}>Counter: ${counterProfit.toLocaleString()} ({counterPct >= 0 ? `+${counterPct}%` : `${counterPct}%`})</div> : null}
                           </div>
                         );
                       })() : null}
+
+                      {/* Negotiation status / patience */}
+                      <div style={{marginTop:12}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                          <div className="small">Negotiation status</div>
+                        </div>
+                        <div style={{height:10, background:'#f1f1f1', borderRadius:6, marginTop:6, overflow:'hidden'}}>
+                          <div style={{width: Math.max(0, Math.min(100, patiencePct)) + '%', height:'100%', background:patienceColor}} />
+                        </div>
+                      </div>
+
+                      {/* Controls */}
+                      <div style={{marginTop:12}}>
                         <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                        <button className="btn" onClick={acceptBuyerOffer} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={buyerWalked}>Accept</button>
-                        <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
-                        <button className="btn" onClick={()=>handleSellCounterValue(counterValue)} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed',border:'none'} : {background:'#fd7e14',border:'none'}} disabled={buyerWalked}>Counter</button>
-                        <button className="btn secondary" onClick={declineCounter} style={buyerWalked ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={buyerWalked}>Decline</button>
+                          <button className="btn" onClick={acceptBuyerOffer} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed'} : {background:'#28a745'}} disabled={buyerWalked || !lastBuyerOffer}>Accept</button>
+                          <input className="input" placeholder="Counter amount" value={counterValue} onChange={e=>setCounterValue(e.target.value)} onFocus={e=>e.target.select()} style={{width:120}} />
+                          <button className="btn" onClick={()=>handleSellCounterValue(counterValue)} style={buyerWalked ? {background:'#ddd',color:'#777',cursor:'not-allowed',border:'none'} : {background:'#fd7e14',border:'none'}} disabled={buyerWalked}>Counter</button>
+                          <button className="btn secondary" onClick={declineCounter} style={buyerWalked ? {marginLeft:8,background:'#f5f5f5',color:'#777',borderColor:'#eee',cursor:'not-allowed'} : {marginLeft:8}} disabled={buyerWalked}>Decline</button>
+                        </div>
                       </div>
                     </div>
-                  ) : (
-                    <div className="small">No buyer offer available.</div>
-                  )}
-                  {buyerWalked ? <div style={{marginTop:8,color:'#b21f2d',fontWeight:700}}>Buyer walked away.</div> : null}
-                </>
-              )}
+                    {/* end sell card */}
+                  </>
+                )}
+              </div>
+
+              {/* render log under negotiation controls */}
+              {log.length > 0 ? (
+                <div style={{marginTop:14}}>
+                  <div style={{fontWeight:700, marginBottom:8}}>Log</div>
+                  <div style={{maxHeight:220,overflowY:"auto",marginTop:6,border:'1px solid #f6f6f6',borderRadius:6,padding:6,background:'#fafafa'}}>
+                    {log.map((l,idx)=>(
+                      <div key={idx} className="small" style={{padding:6,borderBottom: idx===log.length-1 ? 'none' : '1px solid #f1f1f1'}}>{l.text}</div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
-
           </div>
         </div>
-
-        <div style={{marginTop:14}}>
-          <div style={{fontWeight:700, marginBottom:8}}>Log</div>
-          <div style={{maxHeight:220,overflowY:"auto",marginTop:6,border:'1px solid #f6f6f6',borderRadius:6,padding:6,background:'#fafafa'}}>
-            {log.map((l,idx)=>(
-              <div key={idx} className="small" style={{padding:6,borderBottom: idx===log.length-1 ? 'none' : '1px solid #f1f1f1'}}>{l.text}</div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
+    );
+  }

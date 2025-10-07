@@ -36,8 +36,9 @@ function generateCarInstance(template){
   const totalDamage = (damages||[]).reduce((s,d)=>s + (d.cost||0), 0);
   const damageDiscount = Math.round(totalDamage * 0.7);
   const estimatedResale = Math.max(300, Math.round(base * (1.1 + Math.random()*0.4) - damageDiscount));
+  const estimatedRepairCost = Math.round(totalDamage * 0.7);
   const id = uid("car");
-  return { id, make: template.make, model: template.model, year, mileage, condition, base, asking, reserve, estimatedResale, damages, status:"market" };
+  return { id, make: template.make, model: template.model, year, mileage, condition, base, asking, reserve, estimatedResale, damages, estimatedRepairCost, inspected: false, status:"market" };
 }
 
 export default function App(){
@@ -153,6 +154,34 @@ export default function App(){
   function removeMarketCar(carId){
     setMarket(prev => prev.filter(c => c.id !== carId));
     addToast({ text: `Seller removed ${carId} from the market.`, type: 'warning' });
+  }
+
+  function buyInspection(carId, cost){
+    const car = market.find(c => c.id === carId);
+    if(!car) return;
+    if(cost > cash){ addToast({ text: `Not enough cash for inspection.`, type: 'bad' }); return; }
+    setCash(c=>c-cost);
+    setMarket(prev=> prev.map(c=> c.id===carId ? {...c, inspected:true} : c));
+    addToast({ text: `Inspection purchased for ${car.year} ${car.make} ${car.model} ($${cost})`, type: 'info' });
+  }
+
+  function repairCar(carId, cost){
+    // repair car in inventory: deduct cash and reduce damages, update condition and est resale
+    const car = inventory.find(c=>c.id===carId);
+    if(!car) return;
+    if(cost > cash){ addToast({ text: `Not enough cash for repair.`, type: 'bad' }); return; }
+    setCash(c=>c-cost);
+    setInventory(prev => prev.map(ic => {
+      if(ic.id !== carId) return ic;
+      // simple repair: remove some damage cost and bump condition
+      const newDamages = (ic.damages||[]).map(d=> ({...d, cost: Math.max(0, Math.round(d.cost * 0.3))})).filter(d=>d.cost>0);
+      const totalDamage = (newDamages||[]).reduce((s,d)=>s + (d.cost||0), 0);
+      const damageDiscount = Math.round(totalDamage * 0.7);
+      const newEstimatedResale = Math.max(300, Math.round(ic.base * (1.1 + Math.random()*0.4) - damageDiscount));
+      const newCondition = Math.min(5, ic.condition + 1);
+      return {...ic, damages: newDamages, condition: newCondition, estimatedResale: newEstimatedResale };
+    }));
+    addToast({ text: `Repaired car ${car.year} ${car.make} ${car.model} for $${cost}`, type: 'success' });
   }
 
   function createListing(carId, listPrice){
@@ -322,7 +351,7 @@ export default function App(){
           <div className="card market-card">
             <h3>Market</h3>
             <div className="list scrollable" style={{marginTop:10}}>
-              <Market mode="all" market={market} onInspect={(car)=>openNegotiation("buy", car)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
+                <Market mode="all" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
             </div>
           </div>
 
@@ -370,7 +399,7 @@ export default function App(){
             <div className="card market-card full-width">
               <h3>Market</h3>
               <div className="list scrollable" style={{marginTop:10}}>
-                <Market mode="market" market={market} onInspect={(car)=>openNegotiation("buy", car)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
+                  <Market mode="market" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
               </div>
             </div>
           )}
@@ -406,7 +435,7 @@ export default function App(){
             <div className="card full-width">
               <h3>Inventory</h3>
               <div className="list scrollable" style={{marginTop:10}}>
-                <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} />
+                <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} />
               </div>
             </div>
           )}
@@ -414,9 +443,10 @@ export default function App(){
       )}
 
       {(() => {
-        // ensure modals that reference listings receive the live listing object
+        // ensure modals reference the live objects so inspection and buyer updates are reflected
         if(!modal) return null;
         let resolvedModal = modal;
+
         if(modal.side === 'listing' || modal.side === 'sell'){
           const listingId = modal.subject && modal.subject.id;
           if(listingId){
@@ -427,12 +457,23 @@ export default function App(){
             }
             resolvedModal = {...modal, subject: live};
           }
+        } else if(modal.side === 'buy'){
+          // for buy-side negotiation, reference the live market car so inspection flags update
+          const carId = modal.subject && modal.subject.id;
+          if(carId){
+            const live = market.find(c => c.id === carId);
+            if(!live){
+              // market car was removed
+              return null;
+            }
+            resolvedModal = {...modal, subject: live};
+          }
         }
 
         return resolvedModal.side === "listing" ? (
           <ListingModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} refreshMarket={refreshMarket} onNegotiate={openSellNegotiation} onRemoveBuyer={handleRemoveBuyer} onUpdatePrice={updateListingPrice} onUpdateBuyerOffer={updateBuyerOffer} getPriceCooldownRemaining={getPriceCooldownRemaining} getRefreshCooldownRemaining={getRefreshCooldownRemaining} now={now} />
         ) : (
-          <NegotiationModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} onRemoveBuyer={handleRemoveBuyer} onUpdateBuyerOffer={updateBuyerOffer} onRemoveMarketCar={removeMarketCar} />
+          <NegotiationModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} onRemoveBuyer={handleRemoveBuyer} onUpdateBuyerOffer={updateBuyerOffer} onRemoveMarketCar={removeMarketCar} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} />
         );
       })()}
 
