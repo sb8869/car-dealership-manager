@@ -390,23 +390,29 @@ export default function NegotiationModal({modal, cash, onCancel, onBuy, onSell, 
                       {/* Financials (centered) */}
                       <div style={{textAlign:'center', padding:'12px 0', borderTop:'1px solid #f6f6f6'}}>
                         <div style={{fontSize:28,fontWeight:800, color:'#111'}}>${lastBuyerOffer ? lastBuyerOffer.toLocaleString() : ((car.listPrice || car.purchasePrice || 0).toLocaleString())}</div>
-                        <div className="small" style={{color:'#666'}}>Purchase Price: ${typeof car.purchasePrice !== 'undefined' ? Number(car.purchasePrice).toLocaleString() : '-'}</div>
+                        <div className="small" style={{color:'#666'}}>
+                          Purchased: ${typeof car.purchasePrice !== 'undefined' ? Number(car.purchasePrice).toLocaleString() : '-'}
+                          {` `}•{` `}Repairs: ${Number(car.repairSpent || 0).toLocaleString()}
+                          {` `}•{` `}Total spent: ${( (Number(car.purchasePrice || 0) + Number(car.repairSpent || 0)) ).toLocaleString()}
+                        </div>
                       </div>
 
                       {/* Profit / counters (if purchasePrice known) */}
                       {typeof car.purchasePrice !== 'undefined' ? (()=>{
-                        const pp = Number(car.purchasePrice);
-                        const offerProfit = lastBuyerOffer ? Math.round(lastBuyerOffer - pp) : null;
-                        const offerPct = offerProfit !== null && pp ? Math.round((offerProfit/pp)*100) : null;
+                        const pp = Number(car.purchasePrice || 0);
+                        const repairs = Number(car.repairSpent || 0);
+                        const totalSpent = pp + repairs;
+                        const offerProfit = lastBuyerOffer ? Math.round(lastBuyerOffer - totalSpent) : null;
+                        const offerPct = offerProfit !== null && totalSpent ? Math.round((offerProfit/Math.max(1,totalSpent))*100) : null;
                         const counterPrice = Number(counterValue) || null;
-                        const counterProfit = counterPrice ? Math.round(counterPrice - pp) : null;
-                        const counterPct = counterProfit !== null && pp ? Math.round((counterProfit/pp)*100) : null;
+                        const counterProfit = counterPrice ? Math.round(counterPrice - totalSpent) : null;
+                        const counterPct = counterProfit !== null && totalSpent ? Math.round((counterProfit/Math.max(1,totalSpent))*100) : null;
                         const offerColor = offerProfit >= 0 ? '#28a745' : '#b21f2d';
                         const counterColor = counterProfit >= 0 ? '#28a745' : '#b21f2d';
                         return (
                           <div style={{display:'flex',gap:8,alignItems:'center',marginTop:8,marginBottom:4}}>
-                            {offerProfit !== null ? <div style={{fontSize:12,color:offerColor,background: offerColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${offerColor}33`}}>Offer: ${offerProfit.toLocaleString()} ({offerPct >= 0 ? `+${offerPct}%` : `${offerPct}%`})</div> : null}
-                            {counterProfit !== null ? <div style={{fontSize:12,color:counterColor,background: counterColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${counterColor}33`}}>Counter: ${counterProfit.toLocaleString()} ({counterPct >= 0 ? `+${counterPct}%` : `${counterPct}%`})</div> : null}
+                            {offerProfit !== null ? <div style={{fontSize:12,color:offerColor,background: offerColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${offerColor}33`}}>Offer vs spent: ${offerProfit.toLocaleString()} ({offerPct >= 0 ? `+${offerPct}%` : `${offerPct}%`})</div> : null}
+                            {counterProfit !== null ? <div style={{fontSize:12,color:counterColor,background: counterColor === '#28a745' ? '#f6fff6' : '#fff6f6',padding:'4px 8px',borderRadius:6,border:`1px solid ${counterColor}33`}}>Counter vs spent: ${counterProfit.toLocaleString()} ({counterPct >= 0 ? `+${counterPct}%` : `${counterPct}%`})</div> : null}
                           </div>
                         );
                       })() : null}

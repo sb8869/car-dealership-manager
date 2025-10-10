@@ -1,7 +1,10 @@
 import React, {useState, useEffect} from "react";
 import Market from "./components/Market";
 import Inventory from "./components/Inventory";
+import Workshop from "./components/Workshop";
 import ListingModal from "./components/ListingModal";
+import NewListingModal from "./components/NewListingModal";
+import ListingSummary from "./components/ListingSummary";
 import NegotiationModal from "./components/NegotiationModal";
 import CooldownRing from "./components/CooldownRing";
 import modelsData from "./data/models.json";
@@ -46,9 +49,11 @@ export default function App(){
   const [market, setMarket] = useState([]);
   const [inventory, setInventory] = useState(()=>JSON.parse(localStorage.getItem("inventory")||"[]"));
   const [listings, setListings] = useState(()=>JSON.parse(localStorage.getItem("listings")||"[]"));
+  const [repairJobs, setRepairJobs] = useState(()=>JSON.parse(localStorage.getItem("repairJobs")||"[]"));
   const [modal, setModal] = useState(null);
   const [now, setNow] = useState(Date.now());
   const buyerTimers = React.useRef({});
+  const repairTimers = React.useRef({});
   const [toasts, setToasts] = useState([]);
   const priceUpdateTimes = React.useRef({});
   const PRICE_UPDATE_COOLDOWN = 60000; // ms
@@ -60,10 +65,14 @@ export default function App(){
   const gameEpochRef = React.useRef(Number(localStorage.getItem('gameEpoch')) || Date.now());
   const lastAutoRefreshDayRef = React.useRef(null);
   const [activeTab, setActiveTab] = useState('all');
+  const [showNewListing, setShowNewListing] = useState(false);
+  const [newListingCarId, setNewListingCarId] = useState('');
+  const [newListingPrice, setNewListingPrice] = useState('');
 
   useEffect(()=>{ localStorage.setItem("cash", cash); },[cash]);
   useEffect(()=>{ localStorage.setItem("inventory", JSON.stringify(inventory)); },[inventory]);
   useEffect(()=>{ localStorage.setItem("listings", JSON.stringify(listings)); },[listings]);
+  useEffect(()=>{ localStorage.setItem("repairJobs", JSON.stringify(repairJobs)); },[repairJobs]);
 
   useEffect(()=>{ refreshMarket(true); },[]);
 
@@ -173,15 +182,125 @@ export default function App(){
     setCash(c=>c-cost);
     setInventory(prev => prev.map(ic => {
       if(ic.id !== carId) return ic;
-      // simple repair: remove some damage cost and bump condition
-      const newDamages = (ic.damages||[]).map(d=> ({...d, cost: Math.max(0, Math.round(d.cost * 0.3))})).filter(d=>d.cost>0);
-      const totalDamage = (newDamages||[]).reduce((s,d)=>s + (d.cost||0), 0);
-      const damageDiscount = Math.round(totalDamage * 0.7);
+      // perform full repair: clear all damages and bump condition
+      const newDamages = [];
+      const totalDamage = 0;
+      const damageDiscount = 0;
       const newEstimatedResale = Math.max(300, Math.round(ic.base * (1.1 + Math.random()*0.4) - damageDiscount));
       const newCondition = Math.min(5, ic.condition + 1);
-      return {...ic, damages: newDamages, condition: newCondition, estimatedResale: newEstimatedResale };
+      const newEstimatedRepairCost = 0;
+      const prevRepairSpent = Number(ic.repairSpent || 0);
+      const newRepairSpent = prevRepairSpent + Number(cost || 0);
+      return {...ic, damages: newDamages, condition: newCondition, estimatedResale: newEstimatedResale, estimatedRepairCost: newEstimatedRepairCost, repairSpent: newRepairSpent };
     }));
     addToast({ text: `Repaired car ${car.year} ${car.make} ${car.model} for $${cost}`, type: 'success' });
+  }
+
+  // ----- Repair job queue (single bay) -----
+  const REPAIR_MIN_COST = 200;
+  const TIME_PER_DOLLAR = 1000/50; // ms per $
+  const MIN_DURATION = 5000;
+  const MAX_DURATION = 120000;
+
+  function getJobForCar(carId){
+    return repairJobs.find(j=> j.carId === carId && j.status !== 'done' && j.status !== 'cancelled');
+  }
+
+  function startNextJob(){
+    // only one in-progress at a time
+    const inProgress = repairJobs.find(j=>j.status === 'in-progress');
+    if(inProgress) return;
+    const next = repairJobs.find(j=>j.status === 'queued');
+    if(!next) return;
+    // if player can't pay, keep queued (auto-retry will attempt again later)
+    if(next.cost > cash){ return; }
+
+    const started = {...next, status:'in-progress', startAt: Date.now()};
+    setRepairJobs(prev => prev.map(j=> j.id===started.id ? started : j));
+    // charge immediately
+    setCash(c => c - started.cost);
+    const remaining = Math.max(0, started.durationMs);
+    const t = setTimeout(()=>{
+      // complete job
+      completeJob(started.id);
+    }, remaining);
+    repairTimers.current[started.id] = t;
+  }
+
+  // Rehydrate any in-progress job timers on load and when repairJobs change
+  useEffect(()=>{
+    // clear existing timers
+    Object.values(repairTimers.current || {}).forEach(t=>clearTimeout(t));
+    repairTimers.current = {};
+    (repairJobs || []).forEach(j => {
+      if(j.status === 'in-progress'){
+        // if job already completed according to timestamps, finish immediately
+        const endAt = (j.startAt || 0) + (j.durationMs || 0);
+        const remaining = Math.max(0, endAt - Date.now());
+        if(remaining <= 0){
+          // complete synchronously
+          setTimeout(()=> completeJob(j.id), 50);
+        } else {
+          const t = setTimeout(()=> completeJob(j.id), remaining);
+          repairTimers.current[j.id] = t;
+        }
+      }
+    });
+    // try to start next job in case bay free and cash available
+    setTimeout(()=> startNextJob(), 100);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repairJobs]);
+
+  // whenever cash changes, attempt to start next job (auto-retry)
+  useEffect(()=>{
+    startNextJob();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cash]);
+
+  function createRepairJob(carId, cost){
+    if(getJobForCar(carId)) { addToast({ text: `Car already has a repair job.`, type: 'warning' }); return; }
+    const id = uid('job');
+    const durationMs = Math.max(MIN_DURATION, Math.min(MAX_DURATION, Math.round(cost * TIME_PER_DOLLAR)));
+    const job = { id, carId, cost, status:'queued', createdAt: Date.now(), durationMs };
+    setRepairJobs(prev => [ ...prev, job ]);
+    // try to start immediately if bay free
+    setTimeout(()=> startNextJob(), 50);
+  }
+
+  function completeJob(jobId){
+    const job = repairJobs.find(j=>j.id===jobId);
+    if(!job) return;
+    // apply repair effects to inventory (similar logic to repairCar but without charging)
+    setInventory(prev => prev.map(ic => {
+      if(ic.id !== job.carId) return ic;
+      const newDamages = [];
+      const totalDamage = 0;
+      const damageDiscount = 0;
+      const newEstimatedResale = Math.max(300, Math.round(ic.base * (1.1 + Math.random()*0.4) - damageDiscount));
+      const newCondition = Math.min(5, ic.condition + 1);
+      const newEstimatedRepairCost = 0;
+      const prevRepairSpent = Number(ic.repairSpent || 0);
+      const newRepairSpent = prevRepairSpent + Number(job.cost || 0);
+      return {...ic, damages: newDamages, condition: newCondition, estimatedResale: newEstimatedResale, estimatedRepairCost: newEstimatedRepairCost, repairSpent: newRepairSpent };
+    }));
+    setRepairJobs(prev => prev.map(j=> j.id===jobId ? {...j, status:'done', completedAt: Date.now()} : j));
+    // clear timer
+    if(repairTimers.current[jobId]){ clearTimeout(repairTimers.current[jobId]); delete repairTimers.current[jobId]; }
+    addToast({ text: `Repair completed for ${job.carId}`, type: 'success' });
+    // start next
+    setTimeout(()=> startNextJob(), 50);
+  }
+
+  function cancelJob(jobId){
+    const job = repairJobs.find(j=>j.id===jobId);
+    if(!job) return;
+    // if in-progress, refund partial? For simplicity, do not refund if started. If queued, remove and refund nothing (we didn't charge yet)
+    if(job.status === 'in-progress'){
+      addToast({ text: `Cannot cancel an in-progress repair.`, type: 'warning' });
+      return;
+    }
+    setRepairJobs(prev => prev.map(j=> j.id===jobId ? {...j, status:'cancelled'} : j));
+    addToast({ text: `Cancelled repair for ${job.carId}`, type: 'info' });
   }
 
   function createListing(carId, listPrice){
@@ -358,6 +477,12 @@ export default function App(){
           <div className="card">
             <h3>Listings</h3>
             <div className="list scrollable" style={{marginTop:10}}>
+              <div style={{marginBottom:8}}>
+                <button className="btn" onClick={()=> setShowNewListing(s=>!s)}>{showNewListing ? 'Close' : '+ New Listing'}</button>
+                {showNewListing ? (
+                  <NewListingModal open={showNewListing} inventory={inventory} repairJobs={repairJobs} onCancel={()=>setShowNewListing(false)} onCreateListing={(carId, price)=>{ createListing(carId, price); setShowNewListing(false); }} />
+                ) : null}
+              </div>
               {listings.length===0 ? (
                 <div className="small">No active listings. List cars from inventory.</div>
               ) : (
@@ -368,14 +493,7 @@ export default function App(){
                         <div style={{fontWeight:700}}>{l.year} {l.make} {l.model}</div>
                         <HeatBadge listing={l} />
                       </div>
-                      <div className="small">List: ${l.listPrice.toLocaleString()} • Est resale: ${l.estimatedResale.toLocaleString()}</div>
-                      {typeof l.purchasePrice !== 'undefined' ? (
-                        <> 
-                          <div className="small">Purchased for: ${Number(l.purchasePrice).toLocaleString()}</div>
-                          {(() => { const pp = Number(l.purchasePrice); const profit = Math.round(l.listPrice - pp); const pct = pp ? Math.round((profit/pp)*100) : 0; const color = profit >= 0 ? '#28a745' : '#b21f2d'; return (<div className="small" style={{color,fontWeight:700}}>Profit: ${profit.toLocaleString()} ({pct >= 0 ? `+${pct}%` : `${pct}%`})</div>); })()}
-                        </>
-                      ) : null}
-                      <div className="small">Buyers: {l.buyers?.length || 0}</div>
+                        <ListingSummary listing={l} />
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                       <button className="btn" onClick={()=>openListingModal(l)}>View</button>
@@ -389,7 +507,10 @@ export default function App(){
           <div className="card">
             <h3>Inventory</h3>
             <div className="list scrollable" style={{marginTop:10}}>
-              <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} />
+              <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
+              <div style={{marginTop:12}}>
+                <Workshop inventory={inventory} repairJobs={repairJobs} onCancelJob={(jobId)=>cancelJob(jobId)} />
+              </div>
             </div>
           </div>
         </div>
@@ -406,7 +527,13 @@ export default function App(){
           {activeTab === 'listings' && (
             <div className="card full-width">
               <h3>Listings</h3>
-              <div className="list scrollable" style={{marginTop:10}}>
+                <div className="list scrollable" style={{marginTop:10}}>
+                  <div style={{marginBottom:8}}>
+                    <button className="btn" onClick={()=> setShowNewListing(s=>!s)}>{showNewListing ? 'Close' : '+ New Listing'}</button>
+                    {showNewListing ? (
+                      <NewListingModal open={showNewListing} inventory={inventory} repairJobs={repairJobs} onCancel={()=>setShowNewListing(false)} onCreateListing={(carId, price)=>{ createListing(carId, price); setShowNewListing(false); }} />
+                    ) : null}
+                  </div>
                 {listings.length===0 ? <div className="small">No active listings. List cars from inventory.</div> : listings.map(l=>(
                   <div key={l.id} className="car-card">
                     <div>
@@ -414,14 +541,7 @@ export default function App(){
                         <div style={{fontWeight:700}}>{l.year} {l.make} {l.model}</div>
                         <HeatBadge listing={l} />
                       </div>
-                      <div className="small">List: ${l.listPrice.toLocaleString()} • Est resale: ${l.estimatedResale.toLocaleString()}</div>
-                      {typeof l.purchasePrice !== 'undefined' ? (
-                        <> 
-                          <div className="small">Purchased for: ${Number(l.purchasePrice).toLocaleString()}</div>
-                          {(() => { const pp = Number(l.purchasePrice); const profit = Math.round(l.listPrice - pp); const pct = pp ? Math.round((profit/pp)*100) : 0; const color = profit >= 0 ? '#28a745' : '#b21f2d'; return (<div className="small" style={{color,fontWeight:700}}>Profit: ${profit.toLocaleString()} ({pct >= 0 ? `+${pct}%` : `${pct}%`})</div>); })()}
-                        </>
-                      ) : null}
-                      <div className="small">Buyers: {l.buyers?.length || 0}</div>
+                      <ListingSummary listing={l} />
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                       <button className="btn" onClick={()=>openListingModal(l)}>View</button>
@@ -435,7 +555,10 @@ export default function App(){
             <div className="card full-width">
               <h3>Inventory</h3>
               <div className="list scrollable" style={{marginTop:10}}>
-                <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} />
+                <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
+                <div style={{marginTop:12}}>
+                  <Workshop inventory={inventory} repairJobs={repairJobs} onCancelJob={(jobId)=>cancelJob(jobId)} />
+                </div>
               </div>
             </div>
           )}

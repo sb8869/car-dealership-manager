@@ -1,6 +1,7 @@
 
 import React, {useState, useEffect} from "react";
 import CooldownRing from "./CooldownRing";
+import ListingSummary from "./ListingSummary";
 
 export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refreshMarket, onNegotiate, onRemoveBuyer, onUpdatePrice, getPriceCooldownRemaining, now}){
   if (!modal) return null;
@@ -62,23 +63,7 @@ export default function ListingModal({modal, cash, onCancel, onBuy, onSell, refr
         </div>
         <div style={{display:"flex",gap:12,marginTop:12}}>
             <div style={{flex:1}}>
-            <div className="small">List Price: ${listing.listPrice.toLocaleString()}</div>
-            {typeof listing.purchasePrice !== 'undefined' ? (
-              <>
-                <div className="small">Purchased for: ${Number(listing.purchasePrice).toLocaleString()}</div>
-                {(() => {
-                  const pp = Number(listing.purchasePrice);
-                  const profit = Math.round(listing.listPrice - pp);
-                  const pct = pp ? Math.round((profit / pp) * 100) : 0;
-                  const color = profit >= 0 ? '#28a745' : '#b21f2d';
-                  return (
-                    <div className="small" style={{color, fontWeight:700}}>Profit: ${profit.toLocaleString()} ({pct >= 0 ? `+${pct}%` : `${pct}%`})</div>
-                  );
-                })()}
-              </>
-            ) : null}
-            <div className="small">Est resale: ${listing.estimatedResale.toLocaleString()}</div>
-            <div className="small">Buyers on listing: {listing.buyers?.length || 0}</div>
+            <ListingSummary listing={listing} />
             {listing.damages && listing.damages.length>0 ? (
               <div style={{marginTop:6,color: damageWarn ? '#b21f2d' : '#444'}} className="small">Damages: ${totalDamages.toLocaleString()} {damageWarn ? '(⚠️ exceeds est. resale)' : ''}</div>
             ) : null}

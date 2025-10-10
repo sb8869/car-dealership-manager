@@ -19,6 +19,9 @@ body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Rob
 .car-card{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:6px;border:1px solid #eee;background:#fff;}
 .small{font-size:13px;color:var(--muted);}
 
+/* utility: prevent internal line breaks for short phrases */
+.no-wrap{white-space:nowrap}
+
 /* allow flex children to shrink below their content width so long text can wrap inside */
 .car-card > div { min-width: 0; }
 .car-card .small { word-break: break-word; overflow-wrap: break-word; }
@@ -35,6 +38,13 @@ body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Rob
 .modal .card{width:820px;max-width:100%;}
 .row{display:flex;gap:10px;align-items:center;}
 .input{padding:8px;border-radius:6px;border:1px solid #ddd;width:140px;}
+.input-hint{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--muted);opacity:0;transition:opacity .12s}
+.input:focus + .input-hint, .input:hover + .input-hint{opacity:1}
+/* status chips */
+.status-chip{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.status-ready{background:#e6ffef;color:#147a38}
+.status-queued{background:#fff4e6;color:#b7791f}
+.status-repairing{background:#e6f0ff;color:#0f62fe}
 .pulse{animation:pulse 1.2s infinite;}
 @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
 .tag{background:#eef2ff;color:var(--accent);padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #e0e7ff;}
