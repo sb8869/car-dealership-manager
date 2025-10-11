@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from "react";
+import React, {useState, useEffect, useRef} from "react";
 import Market from "./components/Market";
 import Inventory from "./components/Inventory";
 import Workshop from "./components/Workshop";
@@ -7,149 +7,156 @@ import NewListingModal from "./components/NewListingModal";
 import ListingSummary from "./components/ListingSummary";
 import NegotiationModal from "./components/NegotiationModal";
 import CooldownRing from "./components/CooldownRing";
+import { ToastContainer } from "./components/Toast";
 import modelsData from "./data/models.json";
-
-function uid(prefix="id"){ return prefix + "_" + Math.random().toString(36).slice(2,9); }
-function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
-function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
-
-function generateCarInstance(template){
-  const year = 2000 + Math.floor(Math.random()*26);
-  const mileage = randInt(5000,220000);
-  let condition = randInt(1,5);
-  const age = new Date().getFullYear() - year;
-  // determine damages early so they affect condition and pricing
-  const damageChance = Math.random() < 0.28;
-  const damages = damageChance ? [{type: "body", cost: randInt(200,1200)}, {type:"mechanical", cost: randInt(300,2500)}].slice(0, randInt(0,2)) : [];
-  if(damages && damages.length>0){
-    condition = Math.max(1, condition - 1);
-    const totalDamage = damages.reduce((s,d)=>s + (d.cost||0), 0);
-    const marketAnchor = Math.max(1, template.common_market || 1000);
-    const damageSeverity = totalDamage / marketAnchor;
-    if(damageSeverity > 0.5) condition = Math.max(1, condition - 3);
-    else if(damageSeverity > 0.25) condition = Math.max(1, condition - 2);
-    else if(damageSeverity > 0.1) condition = Math.max(1, condition - 1);
-  }
-  let base = Math.round(template.common_market * (1 - age*0.025) - mileage/5000*150 + condition*300 + (Math.random()-0.5)*600);
-  base = clamp(base, 300, Math.max(1000, template.common_market*1.4));
-  const delusional = Math.random() < 0.14;
-  const underpriced = Math.random() < 0.12;
-  const asking = Math.round(base * (underpriced ? (0.65 + Math.random()*0.15) : (delusional ? (1.3 + Math.random()*0.6) : (1.05 + Math.random()*0.45))));
-  const reserve = Math.round(base * (0.55 + Math.random()*0.45));
-  const totalDamage = (damages||[]).reduce((s,d)=>s + (d.cost||0), 0);
-  const damageDiscount = Math.round(totalDamage * 0.7);
-  const estimatedResale = Math.max(300, Math.round(base * (1.1 + Math.random()*0.4) - damageDiscount));
-  const estimatedRepairCost = Math.round(totalDamage * 0.7);
-  const id = uid("car");
-  return { id, make: template.make, model: template.model, year, mileage, condition, base, asking, reserve, estimatedResale, damages, estimatedRepairCost, inspected: false, status:"market" };
-}
+import { useLocalStorage, useGameTime, useToasts, useTimedEvents, useCooldown } from "./hooks";
+import { GAME_CONFIG } from "./constants/index";
+import { 
+  uid, 
+  randInt, 
+  clamp,
+  generateCarInstance,
+  evaluateDeal 
+} from "./utils/gameLogic";
 
 export default function App(){
-  const [cash, setCash] = useState(()=>Number(localStorage.getItem("cash"))||7000);
+  // Use new hooks for better state management
+  const [cash, setCash] = useLocalStorage("cash", 7000);
+  const [inventory, setInventory] = useLocalStorage("inventory", []);
+  const [listings, setListings] = useLocalStorage("listings", []);
+  const [repairJobs, setRepairJobs] = useLocalStorage("repairJobs", []);
+  const [gameEpoch] = useLocalStorage("gameEpoch", Date.now());
+  
   const [market, setMarket] = useState([]);
-  const [inventory, setInventory] = useState(()=>JSON.parse(localStorage.getItem("inventory")||"[]"));
-  const [listings, setListings] = useState(()=>JSON.parse(localStorage.getItem("listings")||"[]"));
-  const [repairJobs, setRepairJobs] = useState(()=>JSON.parse(localStorage.getItem("repairJobs")||"[]"));
   const [modal, setModal] = useState(null);
-  const [now, setNow] = useState(Date.now());
-  const buyerTimers = React.useRef({});
-  const repairTimers = React.useRef({});
-  const [toasts, setToasts] = useState([]);
-  const priceUpdateTimes = React.useRef({});
-  const PRICE_UPDATE_COOLDOWN = 60000; // ms
-  const REFRESH_COOLDOWN = 60000; // ms
-  const refreshTimeRef = React.useRef(0);
-
-  // Game clock
-  const GAME_DAY_MS = 60 * 1000; // 1 minute per in-game day
-  const gameEpochRef = React.useRef(Number(localStorage.getItem('gameEpoch')) || Date.now());
-  const lastAutoRefreshDayRef = React.useRef(null);
   const [activeTab, setActiveTab] = useState('all');
-  const [showNewListing, setShowNewListing] = useState(false);
-  const [newListingCarId, setNewListingCarId] = useState('');
-  const [newListingPrice, setNewListingPrice] = useState('');
+  const [selectedCarForListing, setSelectedCarForListing] = useState(null);
 
-  useEffect(()=>{ localStorage.setItem("cash", cash); },[cash]);
-  useEffect(()=>{ localStorage.setItem("inventory", JSON.stringify(inventory)); },[inventory]);
-  useEffect(()=>{ localStorage.setItem("listings", JSON.stringify(listings)); },[listings]);
-  useEffect(()=>{ localStorage.setItem("repairJobs", JSON.stringify(repairJobs)); },[repairJobs]);
+  // Custom hooks for game logic
+  const { toasts, addToast, removeToast } = useToasts();
+  const { scheduleEvent, cancelEvent, clearAllEvents } = useTimedEvents();
+  const priceCooldown = useCooldown(GAME_CONFIG.PRICE_UPDATE_COOLDOWN);
+  const refreshCooldown = useCooldown(GAME_CONFIG.REFRESH_COOLDOWN);
 
-  useEffect(()=>{ refreshMarket(true); },[]);
+  // Game time management
+  const { now, nextRefreshSeconds } = useGameTime(gameEpoch, () => {
+    refreshMarket(true);
+    addToast({ text: `A new morning has arrived — market refreshed.`, type: 'info' });
+  });
 
-  useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
+  const buyerTimers = useRef({});
+  const repairTimers = useRef({});
 
-  useEffect(()=>{
-    Object.values(buyerTimers.current).forEach(arr=>arr.forEach(t=>clearTimeout(t)));
+  // Initialize market on mount
+  useEffect(() => { 
+    refreshMarket(true); 
+  }, []);
+
+  // Set up buyer timers when listings change
+  useEffect(() => {
+    Object.values(buyerTimers.current).forEach(arr => arr.forEach(t => clearTimeout(t)));
     buyerTimers.current = {};
-    listings.forEach(listing=>{
-      if(listing.waveSchedule && listing.waveSchedule.length>0){
+    
+    listings.forEach(listing => {
+      if (listing.waveSchedule && listing.waveSchedule.length > 0) {
         buyerTimers.current[listing.id] = [];
-        listing.waveSchedule.forEach(entry=>{
+        listing.waveSchedule.forEach(entry => {
           const delay = Math.max(0, entry.dueAt - Date.now());
-          const t = setTimeout(()=> runScheduledWave(listing.id, entry.id), delay);
+          const t = setTimeout(() => runScheduledWave(listing.id, entry.id), delay);
           buyerTimers.current[listing.id].push(t);
         });
       }
     });
-  },[listings]);
+  }, [listings]);
 
-  // Market config
-  const MARKET_SIZE = 24;
-  const MARKET_CHURN = 0.30;
+  // Modal functions
+  function openNegotiation(side, car) { 
+    setModal({ side, subject: car }); 
+  }
+  
+  function openSellNegotiation(listing, buyer) { 
+    setModal({ side: "sell", subject: listing, buyer }); 
+  }
+  
+  function closeModal() { 
+    setModal(null); 
+  }
 
-  function refreshMarket(bypassCooldown = false){
-    const nowTs = Date.now();
-    if(!bypassCooldown && (nowTs - refreshTimeRef.current < REFRESH_COOLDOWN)) return;
-    refreshTimeRef.current = nowTs;
-    if(!market || market.length === 0){
+  // Purchase functions
+  function finalizePurchase(car, price) { 
+    setCash(c => c - price); 
+    setInventory(prev => [{ ...car, purchasePrice: price, status: "owned" }, ...prev]); 
+    setMarket(prev => prev.filter(c => c.id !== car.id)); 
+    setModal(null); 
+  }
+
+  function finalizePurchaseWithToast(car, price) { 
+    finalizePurchase(car, price); 
+    addToast({ 
+      text: `Purchased ${car.year} ${car.make} ${car.model} for $${price}`, 
+      type: 'success' 
+    }); 
+  }
+
+  function removeMarketCar(carId) {
+    setMarket(prev => prev.filter(c => c.id !== carId));
+    addToast({ 
+      text: `Seller removed ${carId} from the market.`, 
+      type: 'warning' 
+    });
+  }
+
+  function buyInspection(carId, cost) {
+    const car = market.find(c => c.id === carId);
+    if (!car) return;
+    if (cost > cash) { 
+      addToast({ text: `Not enough cash for inspection.`, type: 'bad' }); 
+      return; 
+    }
+    setCash(c => c - cost);
+    setMarket(prev => prev.map(c => c.id === carId ? { ...c, inspected: true } : c));
+    addToast({ 
+      text: `Inspection purchased for ${car.year} ${car.make} ${car.model} ($${cost})`, 
+      type: 'info' 
+    });
+  }
+
+  function refreshMarket(bypassCooldown = false) {
+    if (!bypassCooldown && refreshCooldown.isOnCooldown('market')) return;
+    
+    refreshCooldown.startCooldown('market');
+    
+    if (!market || market.length === 0) {
       const full = [];
-      for(let i=0;i<MARKET_SIZE;i++){
-        const template = modelsData[Math.floor(Math.random()*modelsData.length)];
+      for (let i = 0; i < GAME_CONFIG.MARKET_SIZE; i++) {
+        const template = modelsData[Math.floor(Math.random() * modelsData.length)];
         const car = generateCarInstance(template);
-        if(i < Math.floor(MARKET_SIZE * 0.08)){
-          car.asking = Math.round(car.asking * (0.55 + Math.random()*0.6));
-          car.reserve = Math.round(car.reserve * (0.45 + Math.random()*0.6));
+        if (i < Math.floor(GAME_CONFIG.MARKET_SIZE * 0.08)) {
+          car.asking = Math.round(car.asking * (0.55 + Math.random() * 0.6));
+          car.reserve = Math.round(car.reserve * (0.45 + Math.random() * 0.6));
         }
         full.push(car);
       }
       setMarket(full);
       return;
     }
-    const keepCount = Math.max(1, Math.floor(market.length * (1 - MARKET_CHURN)));
+    
+    const keepCount = Math.max(1, Math.floor(market.length * (1 - GAME_CONFIG.MARKET_CHURN)));
     const kept = market.slice(0, keepCount);
     const replaced = [];
-    while(kept.length + replaced.length < MARKET_SIZE){
-      const template = modelsData[Math.floor(Math.random()*modelsData.length)];
+    
+    while (kept.length + replaced.length < GAME_CONFIG.MARKET_SIZE) {
+      const template = modelsData[Math.floor(Math.random() * modelsData.length)];
       const car = generateCarInstance(template);
-      if(Math.random() < 0.06){
-        car.asking = Math.round(car.asking * (0.6 + Math.random()*0.35));
-        car.reserve = Math.round(car.reserve * (0.5 + Math.random()*0.35));
+      if (Math.random() < 0.06) {
+        car.asking = Math.round(car.asking * (0.6 + Math.random() * 0.35));
+        car.reserve = Math.round(car.reserve * (0.5 + Math.random() * 0.35));
       }
       replaced.push(car);
     }
-    setMarket([ ...kept, ...replaced ]);
+    
+    setMarket([...kept, ...replaced]);
   }
-
-  function getNextRefreshRemaining(){
-    const epoch = gameEpochRef.current;
-    const elapsed = Date.now() - epoch;
-    const dayIndex = Math.floor(elapsed / GAME_DAY_MS);
-    const nextDue = epoch + (dayIndex + 1) * GAME_DAY_MS;
-    const rem = Math.ceil(Math.max(0, (nextDue - Date.now())/1000));
-    return rem;
-  }
-
-  useEffect(()=>{
-    const epoch = gameEpochRef.current;
-    const elapsed = now - epoch;
-    const dayIndex = Math.floor(elapsed / GAME_DAY_MS);
-    if(lastAutoRefreshDayRef.current === null) lastAutoRefreshDayRef.current = dayIndex;
-    if(dayIndex > lastAutoRefreshDayRef.current){
-      refreshMarket(true);
-      lastAutoRefreshDayRef.current = dayIndex;
-      addToast({ text: `A new morning has arrived — market refreshed.`, type: 'info' });
-    }
-  },[now]);
 
   function openNegotiation(side, car){ setModal({side, subject: car}); }
   function openSellNegotiation(listing, buyer){ setModal({side: "sell", subject: listing, buyer}); }
@@ -435,34 +442,144 @@ export default function App(){
 
   function finalizeSale(listingId, buyerId, price){ const listing = listings.find(l=>l.id===listingId); if(!listing) return; setCash(c=>c+price); setListings(prev=>prev.filter(l=>l.id!==listingId)); if(buyerTimers.current[listingId]){ buyerTimers.current[listingId].forEach(t=>clearTimeout(t)); delete buyerTimers.current[listingId]; } addToast({ text: `Sold ${listing.year} ${listing.make} ${listing.model} for $${price}`, type: 'success' }); setModal(null); }
 
-  function updateListingPrice(listingId, newPrice){ const last = priceUpdateTimes.current[listingId] || 0; const nowt = Date.now(); if(nowt - last < PRICE_UPDATE_COOLDOWN) return; priceUpdateTimes.current[listingId] = nowt; setListings(prev=>{ const next = prev.map(l=> l.id===listingId ? {...l, listPrice: newPrice} : l); const updated = next.find(x=>x.id===listingId); if(updated) scheduleBuyerWaves(updated); return next; }); addToast({ text: `Updated listing price to $${newPrice}`, type: 'info' }); }
+  function updateListingPrice(listingId, newPrice){ 
+    if(priceCooldown.isOnCooldown(listingId)) return; 
+    priceCooldown.startCooldown(listingId); 
+    setListings(prev=>{ 
+      const next = prev.map(l=> l.id===listingId ? {...l, listPrice: newPrice} : l); 
+      const updated = next.find(x=>x.id===listingId); 
+      if(updated) scheduleBuyerWaves(updated); 
+      return next; 
+    }); 
+    addToast({ text: `Updated listing price to $${newPrice}`, type: 'info' }); 
+  }
 
-  function getPriceCooldownRemaining(listingId){ const last = priceUpdateTimes.current[listingId] || 0; const rem = Math.ceil(Math.max(0, (last + PRICE_UPDATE_COOLDOWN - now)/1000)); return rem; }
-  function getRefreshCooldownRemaining(){ const rem = Math.ceil(Math.max(0, (refreshTimeRef.current + REFRESH_COOLDOWN - now)/1000)); return rem; }
-
-  function addToast(t){ const id = Math.random().toString(36).slice(2,9); const entry = { id, ...t }; setToasts(prev=>[...prev, entry]); const timeout = t.timeout || 3500; setTimeout(()=>{ setToasts(prev=>prev.filter(x=>x.id!==id)); }, timeout); }
+  function getPriceCooldownRemaining(listingId){ 
+    return Math.ceil(priceCooldown.getRemainingTime(listingId) / 1000); 
+  }
+  function getRefreshCooldownRemaining(){ return Math.ceil(refreshCooldown.getRemainingTime('market') / 1000); }
 
   return (
     <div className="app">
-      <div className="header">
-        <h2>🚗 Car Dealer — Phase 1 Prototype (v2)</h2>
-        <div>
-          <span className="small">Cash: </span> <span className="cash">${cash.toLocaleString()}</span>
-          {" "}
-          <button className="btn secondary" style={{marginLeft:12, position:'relative', display:'inline-flex', alignItems:'center'}} disabled>
-            Market updates automatically
-            <span style={{marginLeft:8}}>
-              <CooldownRing remaining={getNextRefreshRemaining()} duration={Math.ceil(GAME_DAY_MS/1000)} size={18} stroke={3} color="#007bff" bg="#eee" />
-            </span>
-          </button>
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '24px',
+        marginBottom: '32px',
+        borderRadius: '0 0 16px 16px',
+        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)'
+      }}>
+        {/* Header */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '24px'
+        }}>
+          <div>
+            <h1 style={{
+              margin: 0,
+              fontSize: '32px',
+              fontWeight: 900,
+              color: 'white',
+              textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
+              letterSpacing: '-0.5px'
+            }}>
+              🚗 AutoFlip Dealership
+            </h1>
+            <p style={{
+              margin: '4px 0 0 0',
+              fontSize: '16px',
+              color: 'rgba(255, 255, 255, 0.9)',
+              fontWeight: 500
+            }}>
+              Buy, repair, and sell cars for profit
+            </p>
+          </div>
+          
+          {/* Cash Counter */}
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.15)',
+            backdropFilter: 'blur(10px)',
+            padding: '16px 24px',
+            borderRadius: '12px',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            textAlign: 'right'
+          }}>
+            <div style={{
+              fontSize: '14px',
+              color: 'rgba(255, 255, 255, 0.8)',
+              fontWeight: 600,
+              marginBottom: '4px'
+            }}>
+              Available Cash
+            </div>
+            <div style={{
+              fontSize: '28px',
+              fontWeight: 900,
+              color: 'white',
+              textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
+            }}>
+              ${cash.toLocaleString()}
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div className="tabs" style={{marginBottom:12}}>
-        <button className={`tab-button ${activeTab==='all' ? 'active' : ''}`} onClick={()=>setActiveTab('all')}>All</button>
-        <button className={`tab-button ${activeTab==='market' ? 'active' : ''}`} onClick={()=>setActiveTab('market')}>Market</button>
-        <button className={`tab-button ${activeTab==='listings' ? 'active' : ''}`} onClick={()=>setActiveTab('listings')}>Listings</button>
-        <button className={`tab-button ${activeTab==='inventory' ? 'active' : ''}`} onClick={()=>setActiveTab('inventory')}>Inventory</button>
+        {/* Tabs */}
+        <div style={{
+          display: 'flex',
+          gap: '8px',
+          background: 'rgba(255, 255, 255, 0.1)',
+          padding: '8px',
+          borderRadius: '12px',
+          backdropFilter: 'blur(10px)'
+        }}>
+          {[
+            { id: 'all', label: '🏠 Overview', icon: '🏠' },
+            { id: 'market', label: '🛒 Market', icon: '🛒' },
+            { id: 'listings', label: '📋 Listings', icon: '📋' },
+            { id: 'inventory', label: '🏭 Inventory', icon: '🏭' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                background: activeTab === tab.id 
+                  ? 'rgba(255, 255, 255, 0.25)' 
+                  : 'transparent',
+                border: 'none',
+                padding: '12px 20px',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: 700,
+                color: activeTab === tab.id 
+                  ? 'white' 
+                  : 'rgba(255, 255, 255, 0.8)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                backdropFilter: activeTab === tab.id ? 'blur(10px)' : 'none',
+                textShadow: activeTab === tab.id ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+              onMouseEnter={(e) => {
+                if (activeTab !== tab.id) {
+                  e.target.style.background = 'rgba(255, 255, 255, 0.1)';
+                  e.target.style.color = 'white';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeTab !== tab.id) {
+                  e.target.style.background = 'transparent';
+                  e.target.style.color = 'rgba(255, 255, 255, 0.8)';
+                }
+              }}
+            >
+              <span style={{ fontSize: '18px' }}>{tab.icon}</span>
+              {tab.label.split(' ')[1]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {activeTab === 'all' ? (
@@ -470,34 +587,23 @@ export default function App(){
           <div className="card market-card">
             <h3>Market</h3>
             <div className="list scrollable" style={{marginTop:10}}>
-                <Market mode="all" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
+                <Market mode="all" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={nextRefreshSeconds} />
             </div>
           </div>
 
           <div className="card">
             <h3>Listings</h3>
             <div className="list scrollable" style={{marginTop:10}}>
-              <div style={{marginBottom:8}}>
-                <button className="btn" onClick={()=> setShowNewListing(s=>!s)}>{showNewListing ? 'Close' : '+ New Listing'}</button>
-                {showNewListing ? (
-                  <NewListingModal open={showNewListing} inventory={inventory} repairJobs={repairJobs} onCancel={()=>setShowNewListing(false)} onCreateListing={(carId, price)=>{ createListing(carId, price); setShowNewListing(false); }} />
-                ) : null}
-              </div>
               {listings.length===0 ? (
                 <div className="small">No active listings. List cars from inventory.</div>
               ) : (
                 listings.map(l => (
-                  <div key={l.id} className="car-card">
-                    <div>
-                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                        <div style={{fontWeight:700}}>{l.year} {l.make} {l.model}</div>
-                        <HeatBadge listing={l} />
-                      </div>
-                        <ListingSummary listing={l} />
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      <button className="btn" onClick={()=>openListingModal(l)}>View</button>
-                    </div>
+                  <div key={l.id} style={{marginBottom: '12px'}}>
+                    <ListingSummary 
+                      listing={l} 
+                      clickable={true}
+                      onClick={() => openListingModal(l)}
+                    />
                   </div>
                 ))
               )}
@@ -507,7 +613,7 @@ export default function App(){
           <div className="card">
             <h3>Inventory</h3>
             <div className="list scrollable" style={{marginTop:10}}>
-              <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
+              <Inventory inventory={inventory} onList={(car) => setSelectedCarForListing(car)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
               <div style={{marginTop:12}}>
                 <Workshop inventory={inventory} repairJobs={repairJobs} onCancelJob={(jobId)=>cancelJob(jobId)} />
               </div>
@@ -520,7 +626,7 @@ export default function App(){
             <div className="card market-card full-width">
               <h3>Market</h3>
               <div className="list scrollable" style={{marginTop:10}}>
-                  <Market mode="market" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={getNextRefreshRemaining()} />
+                  <Market mode="market" market={market} onInspect={(car)=>openNegotiation("buy", car)} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} getRefreshCooldownRemaining={getRefreshCooldownRemaining} nextRefreshSeconds={nextRefreshSeconds} />
               </div>
             </div>
           )}
@@ -528,24 +634,13 @@ export default function App(){
             <div className="card full-width">
               <h3>Listings</h3>
                 <div className="list scrollable" style={{marginTop:10}}>
-                  <div style={{marginBottom:8}}>
-                    <button className="btn" onClick={()=> setShowNewListing(s=>!s)}>{showNewListing ? 'Close' : '+ New Listing'}</button>
-                    {showNewListing ? (
-                      <NewListingModal open={showNewListing} inventory={inventory} repairJobs={repairJobs} onCancel={()=>setShowNewListing(false)} onCreateListing={(carId, price)=>{ createListing(carId, price); setShowNewListing(false); }} />
-                    ) : null}
-                  </div>
                 {listings.length===0 ? <div className="small">No active listings. List cars from inventory.</div> : listings.map(l=>(
-                  <div key={l.id} className="car-card">
-                    <div>
-                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                        <div style={{fontWeight:700}}>{l.year} {l.make} {l.model}</div>
-                        <HeatBadge listing={l} />
-                      </div>
-                      <ListingSummary listing={l} />
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      <button className="btn" onClick={()=>openListingModal(l)}>View</button>
-                    </div>
+                  <div key={l.id} style={{marginBottom: '12px'}}>
+                    <ListingSummary 
+                      listing={l} 
+                      clickable={true}
+                      onClick={() => openListingModal(l)}
+                    />
                   </div>
                 ))}
               </div>
@@ -555,7 +650,7 @@ export default function App(){
             <div className="card full-width">
               <h3>Inventory</h3>
               <div className="list scrollable" style={{marginTop:10}}>
-                <Inventory inventory={inventory} onList={(car,price)=>createListing(car.id,price)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
+                <Inventory inventory={inventory} onList={(car) => setSelectedCarForListing(car)} onRepair={(carId,cost)=>repairCar(carId,cost)} onSendToWorkshop={(carId,cost)=>createRepairJob(carId,cost)} repairJobs={repairJobs} />
                 <div style={{marginTop:12}}>
                   <Workshop inventory={inventory} repairJobs={repairJobs} onCancelJob={(jobId)=>cancelJob(jobId)} />
                 </div>
@@ -599,6 +694,21 @@ export default function App(){
           <NegotiationModal modal={resolvedModal} cash={cash} onCancel={()=>setModal(null)} onBuy={(car,price)=>finalizePurchaseWithToast(car,price)} onSell={finalizeSale} onRemoveBuyer={handleRemoveBuyer} onUpdateBuyerOffer={updateBuyerOffer} onRemoveMarketCar={removeMarketCar} onBuyInspection={(carId,cost)=>buyInspection(carId,cost)} />
         );
       })()}
+
+      {/* Car-specific listing modal */}
+      {selectedCarForListing && (
+        <NewListingModal 
+          open={!!selectedCarForListing} 
+          preSelectedCar={selectedCarForListing}
+          inventory={inventory} 
+          repairJobs={repairJobs} 
+          onCancel={() => setSelectedCarForListing(null)} 
+          onCreateListing={(carId, price) => { 
+            createListing(carId, price); 
+            setSelectedCarForListing(null); 
+          }} 
+        />
+      )}
 
       <div style={{position:'fixed',right:20,bottom:20,display:'flex',flexDirection:'column',gap:8,zIndex:9999}}>
         {toasts.map(t=>(
